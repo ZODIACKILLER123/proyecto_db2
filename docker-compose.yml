@@ -1,0 +1,64 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: recolectora_db
+    restart: unless-stopped
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --log-bin-trust-function-creators=1
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: empresa_recolectora
+      MYSQL_USER: ${MYSQL_USER:-recolectora}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-recolectora}
+      TZ: America/La_Paz
+    ports:
+      - "3307:3306"   # 3307 en tu PC para no chocar con un MySQL local
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  backend:
+    build: ./backend
+    container_name: recolectora_backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: empresa_recolectora
+      DB_USER: ${MYSQL_USER:-recolectora}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-recolectora}
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: recolectora_frontend
+    restart: unless-stopped
+    environment:
+      API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

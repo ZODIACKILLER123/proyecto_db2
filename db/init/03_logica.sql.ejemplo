@@ -1,0 +1,24 @@
+-- ============================================================
+-- AQUI VA LA LOGICA DE LA BD (procedimientos, funciones, cursores, triggers)
+-- Renombra este archivo a 03_logica.sql (quita ".ejemplo") y se ejecuta
+-- automaticamente al crear la BD desde cero.
+-- Los archivos .sql de esta carpeta corren en orden alfabetico.
+-- ============================================================
+USE empresa_recolectora;
+
+DELIMITER $$
+
+-- Ejemplo minimo de funcion (el backend ya sabe llamarla):
+CREATE FUNCTION f_estado_operativo_transporte(p_idTransporte INT)
+RETURNS VARCHAR(20)
+READS SQL DATA
+BEGIN
+    DECLARE v_estado VARCHAR(30);
+    SELECT estado INTO v_estado FROM TRANSPORTE WHERE idTransporte = p_idTransporte;
+    IF v_estado IS NULL THEN
+        RETURN NULL;
+    END IF;
+    RETURN IF(UPPER(v_estado) = 'ACTIVO', 'OPERATIVO', 'NO OPERATIVO');
+END$$
+
+DELIMITER ;
