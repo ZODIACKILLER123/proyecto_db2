@@ -6,30 +6,61 @@ import EstadoBD from './pages/EstadoBD.jsx'
 
 // Capa 1 del modelo navegacional: cada modulo apunta a tablas y rutinas de la BD.
 const MODULOS = [
-  { id: 'personal', titulo: 'Registro de personal',
+  {
+    id: 'personal', titulo: 'Registro de personal',
     descripcion: 'Personas, conductores y recolectores.',
-    tablas: ['PERSONA', 'CONDUCTOR', 'RECOLECTOR'], rutinas: ['registrar_persona_conductor'] },
-  { id: 'rutas', titulo: 'Rutas y vías',
+    tablas: ['PERSONA', 'CONDUCTOR', 'RECOLECTOR'], rutinasPorTabla: {
+      PERSONA: ['registrar_persona'],
+      CONDUCTOR: ['registrar_conductor'],
+      RECOLECTOR: ['registrar_recolector'],
+    },
+    rutinas: []
+  },
+  {
+    id: 'rutas', titulo: 'Rutas y vías',
     descripcion: 'Zonas, vías, rutas y contenedores.',
     tablas: ['RUTA', 'VIA', 'ZONA', 'CONTENEDOR', 'INTEGRA'],
-    rutinas: ['asignar_transporte_ruta', 'eliminar_zona_segura'] },
-  { id: 'flota', titulo: 'Flota y botaderos',
+    rutinasPorTabla: {
+      RUTA: ['asignar_transporte_ruta'],
+      VIA: ['registrar_via'],
+      ZONA: ['registrar_zona', 'eliminar_zona_segura'],
+      CONTENEDOR: ['registrar_contenedor'],
+    },
+    rutinas: []
+  },
+  {
+    id: 'flota', titulo: 'Flota y botaderos',
     descripcion: 'Transportes, botaderos y las rutas por las que pasan.',
     tablas: ['TRANSPORTE', 'BOTADERO', 'PASA_POR'],
-    rutinas: ['capacidad_total_botadero', 'estado_operativo_transporte', 'reasignar_recolector_transporte'] },
-  { id: 'recoleccion', titulo: 'Operaciones de recolección',
+    rutinasPorTabla: {
+      TRANSPORTE: ['estado_operativo_transporte', 'reasignar_recolector_transporte'],
+      BOTADERO: ['capacidad_total_botadero'],
+    },
+    rutinas: []
+  },
+  {
+    id: 'recoleccion', titulo: 'Operaciones de recolección',
     descripcion: 'Recolectas realizadas y zonas de trabajo.',
     tablas: ['RECOLECTA', 'TRABAJA'],
-    rutinas: ['registrar_recoleccion', 'recolectas_por_recolector', 'cobertura_zona'] },
-  { id: 'materiales', titulo: 'Materiales y costos',
+    rutinasPorTabla: {
+      RECOLECTA: ['registrar_recoleccion', 'recolectas_por_recolector'],
+      TRABAJA: ['cobertura_zona'],
+    },
+    rutinas: []
+  },
+  {
+    id: 'materiales', titulo: 'Materiales y costos',
     descripcion: 'Material entregado al personal y su precio.',
     tablas: ['MATERIAL_TRABAJO', 'DISPONE', 'HISTORIAL_PRECIO_MATERIAL'],
-    rutinas: ['actualizar_precio_material', 'costo_materiales_persona'] },
+    rutinas: ['actualizar_precio_material', 'costo_materiales_persona']
+  },
   { id: 'reportes', titulo: 'Reportes BI', especial: 'reportes' },
-  { id: 'auditoria', titulo: 'Auditoría e historiales',
+  {
+    id: 'auditoria', titulo: 'Auditoría e historiales',
     descripcion: 'Lo que registran los triggers y procedimientos.',
     tablas: ['AUDITORIA_RECOLECCION', 'HISTORIAL_PRECIO_MATERIAL', 'HISTORIAL_ASIGNACION_RECOLECTOR'],
-    rutinas: [] },
+    rutinas: []
+  },
   { id: 'estado', titulo: 'Estado de la BD', especial: 'estado' },
 ]
 
@@ -58,7 +89,7 @@ export default function App() {
         {errorApi && <p className="error">No se pudo conectar con el backend: {errorApi}</p>}
         {modulo.especial === 'estado' ? <EstadoBD />
           : modulo.especial === 'reportes' ? <Reportes catalogo={catalogo} />
-          : <Modulo key={modulo.id} modulo={modulo} catalogo={catalogo} />}
+            : <Modulo key={modulo.id} modulo={modulo} catalogo={catalogo} />}
       </main>
     </div>
   )

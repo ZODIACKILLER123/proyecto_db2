@@ -14,16 +14,74 @@ def p(name: str, label: str, tipo: str = "text", requerido: bool = True) -> dict
 
 # ---- Procedimientos (escritura) -> POST /procedimientos/{key} -------------
 PROCEDIMIENTOS = {
-    "registrar_persona_conductor": {
-        "routine": "p_registrar_persona_conductor",
-        "titulo": "Registrar persona conductor",
-        "descripcion": "SAVEPOINT, valida edad/CI y licencia.",
+    "registrar_persona": {
+        "routine": "p_registrar_persona",
+        "titulo": "Registrar persona",
+        "descripcion": "SAVEPOINT, valida edad, sexo, turno y CI unico.",
         "params": [
             p("p_ci", "CI"), p("p_nombre", "Nombre"), p("p_paterno", "Apellido paterno"),
             p("p_materno", "Apellido materno"), p("p_sexo", "Sexo (M/F)"),
             p("p_fecha_nacimiento", "Fecha de nacimiento", "date"),
-            p("p_telefono", "Telefono"), p("p_direccion", "Direccion"), p("p_turno", "Turno"),
-            p("p_nro_licencia", "Nro. de licencia"), p("p_categoria_licencia", "Categoria de licencia"),
+            p("p_telefono", "Telefono"), p("p_direccion", "Direccion"),
+            p("p_turno", "Turno (Manana/Tarde/Noche)"),
+        ],
+    },
+    "registrar_conductor": {
+        "routine": "p_registrar_conductor",
+        "titulo": "Registrar conductor",
+        "descripcion": "La persona ya debe existir (se busca por CI). Valida licencia.",
+        "params": [
+            p("p_ci", "CI de la persona"),
+            p("p_nro_licencia", "Nro. de licencia"),
+            p("p_categoria_licencia", "Categoria de licencia (A/B/C)"),
+        ],
+    },
+    "registrar_zona": {
+        "routine": "p_registrar_zona",
+        "titulo": "Registrar zona",
+        "descripcion": "Valida nombre unico, ubicacion y cantidad de calles.",
+        "params": [
+            p("p_nombre", "Nombre de la zona"),
+            p("p_ubicacion", "Ubicacion"),
+            p("p_cantidad_calles", "Cantidad de calles", "number"),
+        ],
+    },
+    "registrar_via": {
+        "routine": "p_registrar_via",
+        "titulo": "Registrar via",
+        "descripcion": "La zona debe existir. Tipo: Calle o Avenida.",
+        "params": [
+            p("p_descripcion", "Descripcion"),
+            p("p_calle_avenida", "Tipo (Calle/Avenida)"),
+            p("p_idZona", "ID zona", "number"),
+        ],
+    },
+    "registrar_contenedor": {
+        "routine": "p_registrar_contenedor",
+        "titulo": "Registrar contenedor",
+        "descripcion": "La via debe existir. Tamanio: Pequeno, Mediano o Grande.",
+        "params": [
+            p("p_tipo", "Tipo (ej. Organico (verde))"),
+            p("p_capacidad", "Capacidad (ej. 240 L)"),
+            p("p_tamanio", "Tamanio (Pequeno/Mediano/Grande)"),
+            p("p_idVia", "ID via", "number"),
+        ],
+    },
+    "eliminar_zona_segura": {
+        "routine": "p_eliminar_zona_segura",
+        "titulo": "Eliminar zona (segura)",
+        "descripcion": "Solo elimina la zona si no tiene vias, rutas, trabajos, contenedores ni recolectas.",
+        "params": [p("p_idZona", "ID zona", "number")],
+    },
+    "registrar_recolector": {
+        "routine": "p_registrar_recolector",
+        "titulo": "Registrar recolector",
+        "descripcion": "La persona ya debe existir (se busca por CI). El transporte debe estar operativo.",
+        "params": [
+            p("p_ci", "CI de la persona"),
+            p("p_tipo_empleado", "Tipo (Recolector/Cargador/Ayudante de recoleccion)"),
+            p("p_sueldo", "Sueldo", "number"),
+            p("p_idTransporte", "ID transporte", "number"),
         ],
     },
     "asignar_transporte_ruta": {

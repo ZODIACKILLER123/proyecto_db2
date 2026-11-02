@@ -14,12 +14,16 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-recolectora}
       TZ: America/La_Paz
     ports:
-      - "3307:3306"   # 3307 en tu PC para no chocar con un MySQL local
+      - "3307:3306" # 3307 en tu PC para no chocar con un MySQL local
     volumes:
       - db_data:/var/lib/mysql
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
       interval: 5s
       timeout: 5s
       retries: 40
