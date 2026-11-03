@@ -25,10 +25,9 @@ BEGIN
                  CAST(REGEXP_SUBSTR(t.capacidad, '^[0-9]+([.][0-9]+)?') AS DECIMAL(12,2))
                      AS capacidad_numerica
             FROM TRANSPORTE t
-            JOIN PASA_POR pp ON pp.idTransporte = t.idTransporte
-           WHERE t.idBotadero = p_idBotadero
-             AND UPPER(TRIM(t.estado)) = 'OPERATIVO'
-             AND pp.fecha = CURRENT_DATE()
+             JOIN PASA_POR pp ON pp.idTransporte = t.idTransporte
+            WHERE t.idBotadero = p_idBotadero
+              AND UPPER(TRIM(t.estado)) = 'OPERATIVO'
       ) AS q;
 
     RETURN v_total;
@@ -97,7 +96,7 @@ BEGIN
     DECLARE v_idconductor INT;
     DECLARE v_licencia_valida INT DEFAULT 0;
     DECLARE v_recolectores INT DEFAULT 0;
-    DECLARE v_rutas_hoy INT DEFAULT 0;
+    DECLARE v_rutas INT DEFAULT 0;
 
     SELECT COUNT(*) INTO v_existe
       FROM TRANSPORTE WHERE idTransporte = p_idTransporte;
@@ -117,15 +116,15 @@ BEGIN
     SELECT COUNT(*) INTO v_recolectores
       FROM RECOLECTOR WHERE idTransporte = p_idTransporte;
 
-    SELECT COUNT(*) INTO v_rutas_hoy
-      FROM PASA_POR WHERE idTransporte = p_idTransporte AND fecha = CURRENT_DATE();
+    SELECT COUNT(*) INTO v_rutas
+      FROM PASA_POR WHERE idTransporte = p_idTransporte;
 
-    -- Regla operativa propuesta: estado activo, licencia válida, 1-3
-    -- recolectores y 1-3 rutas asignadas para el día actual.
+    -- Un transporte operativo debe estar activo, tener licencia valida,
+    -- entre 1 y 3 recolectores y al menos una ruta asignada.
     IF UPPER(TRIM(v_estado)) = 'OPERATIVO'
        AND v_licencia_valida = 1
        AND v_recolectores BETWEEN 1 AND 3
-       AND v_rutas_hoy BETWEEN 1 AND 3 THEN
+       AND v_rutas >= 1 THEN
         RETURN 'OPERATIVO';
     END IF;
 

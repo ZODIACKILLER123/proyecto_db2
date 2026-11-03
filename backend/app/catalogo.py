@@ -97,7 +97,7 @@ PROCEDIMIENTOS = {
     "registrar_recoleccion": {
         "routine": "p_registrar_recoleccion",
         "titulo": "Registrar recoleccion",
-        "descripcion": "Valida TRABAJA y transporte activo; devuelve el total del dia.",
+        "descripcion": "La fecha debe tener una asignacion TRABAJA del recolector para la zona del contenedor. Tambien valida transporte activo.",
         "params": [
             p("p_idrecolector", "ID recolector", "number"), p("p_idContenedor", "ID contenedor", "number"),
             p("p_fecha", "Fecha", "date"), p("p_modo", "Modo (REGISTRAR / REASIGNAR)"),
