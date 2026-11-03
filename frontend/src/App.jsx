@@ -52,7 +52,11 @@ const MODULOS = [
     id: 'materiales', titulo: 'Materiales y costos',
     descripcion: 'Material entregado al personal y su precio.',
     tablas: ['MATERIAL_TRABAJO', 'DISPONE', 'HISTORIAL_PRECIO_MATERIAL'],
-    rutinas: ['actualizar_precio_material', 'costo_materiales_persona']
+    rutinasPorTabla: {
+      MATERIAL_TRABAJO: ['actualizar_precio_material'],
+      DISPONE: ['costo_materiales_persona'],
+    },
+    rutinas: []
   },
   { id: 'reportes', titulo: 'Reportes BI', especial: 'reportes' },
   {

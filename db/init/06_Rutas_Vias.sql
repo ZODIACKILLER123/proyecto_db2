@@ -1,4 +1,5 @@
 USE empresa_recolectora;
+SET NAMES utf8mb4;
 
 DELIMITER $$
 
@@ -222,7 +223,13 @@ BEGIN
     SELECT CONCAT('Zona eliminada: ', v_nombre) AS mensaje;
 END$$
 
-
+-- ============================================================
+-- p_asignar_transporte_ruta
+--   * Maximo 3 rutas por dia para un mismo transporte.
+--   * Una ruta la atiende un solo transporte por dia.
+--   * p_modo = 'ASIGNAR'   -> crea la asignacion (la ruta no debe tener transporte ese dia)
+--     p_modo = 'REASIGNAR' -> mueve la ruta de ese dia al transporte indicado
+-- ============================================================
 DROP PROCEDURE IF EXISTS p_asignar_transporte_ruta$$
 
 CREATE PROCEDURE p_asignar_transporte_ruta(
@@ -373,9 +380,12 @@ BEGIN
                   ' al ', p_idTransporte_nuevo, ' (', v_placa, ')') AS mensaje;
 END$$
 
- -- ============================================================
+-- ============================================================
 -- p_registrar_recoleccion
--- Registra o reasigna la recoleccion de un contenedor
+-- Registra o reasigna la recoleccion de un contenedor.
+-- Reglas: el recolector existe, el contenedor existe, el transporte del
+-- recolector esta operativo y el recolector TRABAJA en la zona del contenedor
+-- esa fecha (tabla TRABAJA). Los mensajes de error dicen que dato falla.
 -- ============================================================
 
 DROP PROCEDURE IF EXISTS p_registrar_recoleccion$$
@@ -395,6 +405,8 @@ BEGIN
     DECLARE v_recolecciones INT DEFAULT 0;
     DECLARE v_recolectorAnterior INT;
     DECLARE v_totalDia INT DEFAULT 0;
+    DECLARE v_zonas VARCHAR(255);
+    DECLARE v_mensaje VARCHAR(128);
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -404,110 +416,81 @@ BEGIN
 
     START TRANSACTION;
 
-    -- --------------------------------------------------------
     -- 1. Validar parametros
-    -- --------------------------------------------------------
-
     IF p_idrecolector IS NULL OR p_idrecolector <= 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El ID del recolector no es valido';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El ID del recolector no es valido';
     END IF;
 
     IF p_idContenedor IS NULL OR p_idContenedor <= 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El ID del contenedor no es valido';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El ID del contenedor no es valido';
     END IF;
 
     IF p_fecha IS NULL THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'La fecha de recoleccion es obligatoria';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La fecha de recoleccion es obligatoria';
     END IF;
 
     IF UPPER(TRIM(IFNULL(p_modo, ''))) NOT IN ('REGISTRAR', 'REASIGNAR') THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El modo debe ser REGISTRAR o REASIGNAR';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El modo debe ser REGISTRAR o REASIGNAR';
     END IF;
 
-    -- --------------------------------------------------------
-    -- 2. Validar existencia del recolector
-    -- --------------------------------------------------------
-
-    SELECT COUNT(*)
-    INTO v_existeRecolector
-    FROM RECOLECTOR
-    WHERE idrecolector = p_idrecolector;
-
+    -- 2. Existencia del recolector
+    SELECT COUNT(*) INTO v_existeRecolector FROM RECOLECTOR WHERE idrecolector = p_idrecolector;
     IF v_existeRecolector = 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El recolector indicado no existe';
+        SET v_mensaje = LEFT(CONCAT('El recolector ', p_idrecolector, ' no existe'), 128);
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_mensaje;
     END IF;
 
-    -- --------------------------------------------------------
-    -- 3. Validar existencia del contenedor y obtener su zona
-    -- --------------------------------------------------------
-
-    SELECT COUNT(*)
-    INTO v_existeContenedor
-    FROM CONTENEDOR
-    WHERE idContenedor = p_idContenedor;
-
+    -- 3. Existencia del contenedor y su zona
+    SELECT COUNT(*) INTO v_existeContenedor FROM CONTENEDOR WHERE idContenedor = p_idContenedor;
     IF v_existeContenedor = 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El contenedor indicado no existe';
+        SET v_mensaje = LEFT(CONCAT('El contenedor ', p_idContenedor,
+                                    ' no existe (el campo pide el ID del CONTENEDOR, no el de la zona)'), 128);
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_mensaje;
     END IF;
 
-    SELECT V.idZona
-    INTO v_idZona
-    FROM CONTENEDOR C
-    INNER JOIN VIA V ON C.idVia = V.idVia
-    WHERE C.idContenedor = p_idContenedor;
+    SELECT V.idZona INTO v_idZona
+      FROM CONTENEDOR C
+      INNER JOIN VIA V ON C.idVia = V.idVia
+     WHERE C.idContenedor = p_idContenedor;
 
-    -- --------------------------------------------------------
-    -- 4. Validar que el transporte este operativo
-    -- --------------------------------------------------------
+    -- 4. Transporte operativo
+    SELECT T.estado INTO v_estadoTransporte
+      FROM RECOLECTOR R
+      INNER JOIN TRANSPORTE T ON R.idTransporte = T.idTransporte
+     WHERE R.idrecolector = p_idrecolector;
 
-    SELECT T.estado
-    INTO v_estadoTransporte
-    FROM RECOLECTOR R
-    INNER JOIN TRANSPORTE T
-        ON R.idTransporte = T.idTransporte
-    WHERE R.idrecolector = p_idrecolector;
-
-    IF UPPER(TRIM(v_estadoTransporte)) <> 'OPERATIVO' THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El transporte asignado al recolector no esta operativo';
+    IF UPPER(TRIM(IFNULL(v_estadoTransporte, ''))) <> 'OPERATIVO' THEN
+        SET v_mensaje = LEFT(CONCAT('El transporte del recolector ', p_idrecolector,
+                                    ' no esta operativo (', IFNULL(v_estadoTransporte, 'sin transporte'), ')'), 128);
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_mensaje;
     END IF;
 
-    -- --------------------------------------------------------
-    -- 5. Validar que el recolector trabaje en esa zona y fecha
-    -- --------------------------------------------------------
-
-    SELECT COUNT(*)
-    INTO v_trabaja
-    FROM TRABAJA
-    WHERE idrecolector = p_idrecolector
-      AND idZona = v_idZona
-      AND fecha = p_fecha;
+    -- 5. El recolector debe trabajar en la zona DEL CONTENEDOR esa fecha
+    SELECT COUNT(*) INTO v_trabaja
+      FROM TRABAJA
+     WHERE idrecolector = p_idrecolector
+       AND idZona = v_idZona
+       AND fecha = p_fecha;
 
     IF v_trabaja = 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'El recolector no tiene asignada esta zona para la fecha indicada';
+        SELECT GROUP_CONCAT(DISTINCT idZona ORDER BY idZona SEPARATOR ', ')
+          INTO v_zonas
+          FROM TRABAJA
+         WHERE idrecolector = p_idrecolector AND fecha = p_fecha;
+
+        SET v_mensaje = LEFT(CONCAT('El recolector no tiene asignada la zona ', v_idZona,
+                                    ' (la del contenedor ', p_idContenedor, ') en esa fecha. Zonas ese dia: ',
+                                    IFNULL(v_zonas, 'ninguna')), 128);
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_mensaje;
     END IF;
 
-    -- --------------------------------------------------------
-    -- 6. Consultar recolecciones existentes del contenedor
-    -- --------------------------------------------------------
+    -- 6. Recolecciones existentes del contenedor ese dia
+    SELECT COUNT(*) INTO v_recolecciones
+      FROM RECOLECTA
+     WHERE idContenedor = p_idContenedor
+       AND fecha = p_fecha;
 
-    SELECT COUNT(*)
-    INTO v_recolecciones
-    FROM RECOLECTA
-    WHERE idContenedor = p_idContenedor
-      AND fecha = p_fecha;
-
-    -- --------------------------------------------------------
-    -- 7. Ejecutar segun el modo seleccionado
-    -- --------------------------------------------------------
-
+    -- 7. Ejecutar segun el modo
     IF UPPER(TRIM(p_modo)) = 'REGISTRAR' THEN
 
         IF v_recolecciones > 0 THEN
@@ -515,22 +498,13 @@ BEGIN
             SET MESSAGE_TEXT = 'El contenedor ya tiene una recoleccion registrada para esta fecha';
         END IF;
 
-        INSERT INTO RECOLECTA (
-            idrecolector,
-            idContenedor,
-            fecha
-        )
-        VALUES (
-            p_idrecolector,
-            p_idContenedor,
-            p_fecha
-        );
+        INSERT INTO RECOLECTA (idrecolector, idContenedor, fecha)
+        VALUES (p_idrecolector, p_idContenedor, p_fecha);
 
     ELSEIF UPPER(TRIM(p_modo)) = 'REASIGNAR' THEN
 
         IF v_recolecciones = 0 THEN
-            SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'No existe una recoleccion previa para reasignar';
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No existe una recoleccion previa para reasignar';
         END IF;
 
         IF v_recolecciones > 1 THEN
@@ -538,41 +512,29 @@ BEGIN
             SET MESSAGE_TEXT = 'Existen varias asignaciones para este contenedor y fecha; revise los registros';
         END IF;
 
-        SELECT idrecolector
-        INTO v_recolectorAnterior
-        FROM RECOLECTA
-        WHERE idContenedor = p_idContenedor
-          AND fecha = p_fecha
-        FOR UPDATE;
+        SELECT idrecolector INTO v_recolectorAnterior
+          FROM RECOLECTA
+         WHERE idContenedor = p_idContenedor AND fecha = p_fecha
+           FOR UPDATE;
 
         IF v_recolectorAnterior = p_idrecolector THEN
-            SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'El contenedor ya esta asignado a este recolector';
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El contenedor ya esta asignado a este recolector';
         END IF;
 
         UPDATE RECOLECTA
-        SET idrecolector = p_idrecolector
-        WHERE idContenedor = p_idContenedor
-          AND fecha = p_fecha;
+           SET idrecolector = p_idrecolector
+         WHERE idContenedor = p_idContenedor AND fecha = p_fecha;
 
     END IF;
 
-    -- --------------------------------------------------------
-    -- 8. Calcular total de recolecciones del dia
-    -- --------------------------------------------------------
-
-    SELECT COUNT(*)
-    INTO v_totalDia
-    FROM RECOLECTA
-    WHERE idrecolector = p_idrecolector
-      AND fecha = p_fecha;
+    -- 8. Total de recolecciones del dia del recolector
+    SELECT COUNT(*) INTO v_totalDia
+      FROM RECOLECTA
+     WHERE idrecolector = p_idrecolector AND fecha = p_fecha;
 
     COMMIT;
 
-    -- --------------------------------------------------------
-    -- 9. Devolver resultado
-    -- --------------------------------------------------------
-
+    -- 9. Resultado
     SELECT
         p_idrecolector AS idrecolector,
         p_idContenedor AS idContenedor,
@@ -581,10 +543,10 @@ BEGIN
         v_totalDia AS total_recolecciones_dia,
         CASE
             WHEN UPPER(TRIM(p_modo)) = 'REGISTRAR'
-                THEN 'Recoleccion registrada correctamente'
-            ELSE 'Recoleccion reasignada correctamente'
+                THEN CONCAT('Recoleccion registrada. Total del dia: ', v_totalDia)
+            ELSE CONCAT('Recoleccion reasignada. Total del dia: ', v_totalDia)
         END AS mensaje;
 
-END$$   
+END$$
 
 DELIMITER ;

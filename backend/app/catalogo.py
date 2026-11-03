@@ -7,6 +7,7 @@ Catalogo de la logica que vive en la BD (capa 2 del modelo navegacional).
 tipo de parametro: "text" | "number" | "date"
 """
 
+import re
 
 def p(name: str, label: str, tipo: str = "text", requerido: bool = True) -> dict:
     return {"name": name, "label": label, "tipo": tipo, "requerido": requerido}
@@ -223,8 +224,71 @@ TABLAS = {
 }
 
 
+_TIPOS_NUMERICOS = {"int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double"}
+ 
+ 
+def _etiqueta(nombre: str) -> str:
+    """p_idZona -> 'ID zona'; p_idrecolector -> 'ID recolector'; p_fecha_inicio -> 'Fecha inicio'."""
+    n = re.sub(r"^p_", "", nombre)
+    n = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", n).replace("_", " ").lower()
+    if n.startswith("id "):
+        return "ID " + n[3:]
+    if re.match(r"^id[a-z]", n):
+        return "ID " + n[2:]
+    return n.capitalize()
+ 
+ 
+def _firmas_en_bd(rutina: str | None = None) -> dict[str, list[dict]]:
+    """{nombre_rutina: [{'nombre':..., 'tipo':...}, ...]} leido de information_schema."""
+    from .db import fetch_all  # import local: este modulo se carga antes que la BD
+ 
+    sql = (
+        "SELECT SPECIFIC_NAME AS rutina, PARAMETER_NAME AS nombre, DATA_TYPE AS tipo "
+        "FROM information_schema.PARAMETERS "
+        "WHERE SPECIFIC_SCHEMA = DATABASE() AND ORDINAL_POSITION > 0 "
+        "AND (PARAMETER_MODE IS NULL OR PARAMETER_MODE = 'IN')"
+    )
+    args: tuple = ()
+    if rutina:
+        sql += " AND SPECIFIC_NAME = %s"
+        args = (rutina,)
+    firmas: dict[str, list[dict]] = {}
+    for f in fetch_all(sql + " ORDER BY SPECIFIC_NAME, ORDINAL_POSITION", args):
+        firmas.setdefault(f["rutina"].lower(), []).append({"nombre": f["nombre"], "tipo": f["tipo"]})
+    return firmas
+ 
+ 
+def sincronizar_params(d: dict, firmas: dict | None = None) -> None:
+    """Deja d['params'] igual a la firma real de la rutina en MySQL (si ya existe)."""
+    rutina = d.get("routine")
+    if not rutina:
+        return
+    try:
+        if firmas is None:
+            firmas = _firmas_en_bd(rutina)
+    except Exception:  # noqa: BLE001  (BD caida: se queda lo escrito a mano)
+        return
+    reales = firmas.get(rutina.lower())
+    if not reales:  # la rutina aun no existe en la BD, o no tiene parametros
+        return
+    previos = {x["name"].lower(): x for x in d["params"]}
+    d["params"] = [
+        {
+            "name": r["nombre"],
+            "label": previos[r["nombre"].lower()]["label"] if r["nombre"].lower() in previos else _etiqueta(r["nombre"]),
+            "tipo": "number" if r["tipo"] in _TIPOS_NUMERICOS else "date" if r["tipo"] == "date" else "text",
+            "requerido": previos[r["nombre"].lower()]["requerido"] if r["nombre"].lower() in previos else True,
+        }
+        for r in reales
+    ]
+ 
+ 
 def catalogo_publico() -> list[dict]:
-    """Lista plana que consume el frontend."""
+    """Lista plana que consume el frontend (con los parametros reales de la BD)."""
+    try:
+        firmas = _firmas_en_bd()
+    except Exception:  # noqa: BLE001
+        firmas = {}
     items = []
     for kind, grupo, metodo, base in [
         ("procedimiento", PROCEDIMIENTOS, "POST", "/procedimientos"),
@@ -233,6 +297,7 @@ def catalogo_publico() -> list[dict]:
         ("dml", DML, "POST", "/dml"),
     ]:
         for key, d in grupo.items():
+            sincronizar_params(d, firmas)  # tambien actualiza d, que usa logica.py al ejecutar
             items.append({
                 "key": key, "kind": kind, "metodo": metodo, "ruta": f"{base}/{key}",
                 "routine": d.get("routine"), "titulo": d["titulo"],
