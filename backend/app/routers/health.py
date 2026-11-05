@@ -72,7 +72,7 @@ def prueba_bd():
     checks.append({"prueba": f"Tablas ({len(tablas) - len(faltan)}/{len(tablas)})",
                    "ok": not faltan, "detalle": "Todas existen" if not faltan else "Faltan: " + ", ".join(faltan)})
     vacias = [t["tabla"] for t in tablas if t["existe"] and t["filas"] == 0
-              and not t["tabla"].startswith(("AUDITORIA", "HISTORIAL"))]
+              and not t["tabla"].startswith(("AUDITORIA", "HISTORIAL", "ALERTA", "CIERRE"))]
     checks.append({"prueba": "Datos cargados", "ok": not vacias,
                    "detalle": "Con filas" if not vacias else "Vacias: " + ", ".join(vacias)})
 

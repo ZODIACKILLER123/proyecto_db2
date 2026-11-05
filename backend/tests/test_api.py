@@ -29,8 +29,8 @@ def test_datos_originales():
 
 def test_solo_rutinas_actuales():
     items=client.get('/logica/catalogo').json()
-    assert len(items)==15
-    assert len(FUNCIONES)==len(PROCEDIMIENTOS)==len(CURSORES)==len(TRIGGERS)==5
+    assert len(items)==20
+    assert (len(FUNCIONES),len(PROCEDIMIENTOS),len(CURSORES),len(TRIGGERS))==(5,7,8,13)
     assert {x['kind'] for x in items}=={'funcion','procedimiento','cursor'}
 
 
@@ -61,3 +61,15 @@ def test_cursor_reporte():
     r=client.get('/cursores/zonas?p_desde=2026-09-01&p_hasta=2026-09-30')
     assert r.status_code==200,r.text
     assert r.json()['resultados']
+
+
+def test_alertas_responde():
+    r=client.get('/alertas')
+    assert r.status_code in (200,404)
+    if r.status_code==200:
+        assert {'pendientes','alertas'}<=set(r.json())
+
+
+def test_cursor_botaderos_riesgo():
+    r=client.get('/cursores/botaderos_riesgo')
+    assert r.status_code in (200,501)

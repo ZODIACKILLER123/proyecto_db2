@@ -6,12 +6,18 @@ crea su volumen. Este instalador repara instalaciones con tablas, pero sin rutin
 import logging
 from pathlib import Path
 
+import pymysql
+
 from .db import get_conn
 
 LOG = logging.getLogger(__name__)
 SQL_DIR = Path('/app/sql')
+# 1227 = el objeto lo creo root al inicializar Docker y este usuario no puede borrarlo (SYSTEM_USER)
+# 1304 / 1359 = la rutina o el trigger ya existe. En los tres casos lo ya instalado se conserva.
+YA_INSTALADO = (1227, 1304, 1359)
 SCRIPTS = ('02_funciones.sql', '03_procedimientos.sql',
-           '04_triggers_empresa_recolectora.sql', '05_cursores_empresa_recolectora.sql')
+           '04_triggers_empresa_recolectora.sql', '05_cursores_empresa_recolectora.sql',
+           '06_extension_alertas.sql', '07_triggers_nuevos.sql', '08_cursores_nuevos.sql')
 LAST_STATUS = {'estado': 'pendiente', 'archivos': [], 'errores': []}
 
 
@@ -58,16 +64,24 @@ def instalar_rutinas():
                     status['errores'].append(f'No se encontró {path}')
                     continue
                 numero = 0
+                omitidas = 0
                 try:
                     for stmt in separar_sql(path):
                         # No ejecutar SELECT de demostración al instalar; solo DDL.
                         if stmt.lstrip().upper().startswith(('SELECT ', 'CALL ')):
                             continue
-                        cur.execute(stmt)
-                        while cur.nextset():
-                            pass
-                        numero += 1
-                    status['archivos'].append({'archivo': filename, 'sentencias': numero, 'ok': True})
+                        try:
+                            cur.execute(stmt)
+                            while cur.nextset():
+                                pass
+                            numero += 1
+                        except pymysql.MySQLError as e:
+                            if e.args and e.args[0] in YA_INSTALADO:
+                                omitidas += 1   # ya instalado por el arranque de Docker: se conserva
+                                continue
+                            raise
+                    status['archivos'].append({'archivo': filename, 'sentencias': numero,
+                                               'omitidas_ya_instaladas': omitidas, 'ok': True})
                 except Exception as e:
                     detalle = f'{filename}: sentencia {numero + 1}: {e}'
                     status['errores'].append(detalle)

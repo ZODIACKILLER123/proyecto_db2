@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .db import wait_for_db
 from .instalacion import instalar_rutinas
-from .routers import health, logica, tablas, estadisticas
+from .routers import health, logica, tablas, estadisticas, alertas
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -53,3 +53,4 @@ app.include_router(health.router)
 app.include_router(tablas.router)
 app.include_router(logica.router)
 app.include_router(estadisticas.router)
+app.include_router(alertas.router)
