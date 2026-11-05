@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from .. import catalogo
 from ..db import fetch_all, fetch_one
+from ..instalacion import LAST_STATUS
 
 router = APIRouter(tags=["Diagnostico BD"])
 
@@ -84,3 +85,24 @@ def prueba_bd():
         checks.append({"prueba": f"{etiqueta} ({len(ok)}/{len(grupo)})", "ok": not falta,
                        "detalle": "Todos creados" if not falta else "Pendientes: " + ", ".join(falta)})
     return checks
+
+
+@router.get("/db/instalacion")
+def estado_instalacion():
+    return LAST_STATUS
+
+@router.get('/db/datos')
+def diagnostico_datos():
+    """El esquema puede existir aunque no haya sido cargado el INSERT inicial."""
+    tablas = {x['tabla']: x for x in tablas_existentes()}
+    fundamentales = ('ZONA', 'PERSONA', 'RECOLECTA', 'DESCARGA_BOTADERO')
+    faltantes = [t for t in fundamentales if not tablas[t]['existe']]
+    vacias = [t for t in fundamentales if tablas[t]['existe'] and tablas[t]['filas'] == 0]
+    fechas = None
+    if 'RECOLECTA' not in faltantes:
+        fechas = fetch_one('SELECT MIN(fecha) AS desde, MAX(fecha) AS hasta FROM RECOLECTA')
+    return {'tablas_base': {t: tablas[t]['filas'] for t in fundamentales},
+            'faltantes': faltantes, 'vacias': vacias,
+            'fechas_recoleccion': fechas,
+            'nota': ('La inicialización de Docker se ejecuta solo si el volumen MySQL está vacío. '
+                     'No borres el volumen si contiene información que quieras conservar.')}

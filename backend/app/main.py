@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .db import wait_for_db
-from .routers import health, logica, tablas
+from .instalacion import instalar_rutinas
+from .routers import health, logica, tablas, estadisticas
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     wait_for_db()  # reintenta por si MySQL todavia esta iniciando
+    instalar_rutinas()  # repara volumen existente: no toca tablas ni datos
     yield
 
 
@@ -50,3 +52,4 @@ async def error_mysql(_: Request, exc: pymysql.MySQLError):
 app.include_router(health.router)
 app.include_router(tablas.router)
 app.include_router(logica.router)
+app.include_router(estadisticas.router)

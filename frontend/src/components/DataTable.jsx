@@ -14,7 +14,7 @@ export function Filas({ filas }) {
         </thead>
         <tbody>
           {filas.map((f, i) => (
-            <tr key={i}>{columnas.map((c) => <td key={c}>{String(f[c] ?? '')}</td>)}</tr>
+            <tr key={i}>{columnas.map((c) => <td key={c}>{typeof f[c] === 'object' && f[c] !== null ? JSON.stringify(f[c]) : String(f[c] ?? '')}</td>)}</tr>
           ))}
         </tbody>
       </table>

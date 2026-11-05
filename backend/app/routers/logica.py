@@ -1,73 +1,70 @@
-"""Puente hacia procedimientos, funciones y cursores que viven en MySQL."""
-from datetime import date
-
+"""Ejecuta solo rutinas permitidas por el catálogo; los triggers operan en MySQL."""
+from datetime import date, datetime, time
 from fastapi import APIRouter, HTTPException, Request
-
 from .. import catalogo
-from ..db import call_function, call_procedure, execute, fetch_one
+from ..db import call_function, call_procedure, fetch_all
 
-router = APIRouter(tags=["Logica en la BD"])
+router=APIRouter(tags=['Operaciones y análisis'])
 
 
-def _definicion(grupo: dict, key: str) -> dict:
-    if key not in grupo:
-        raise HTTPException(404, f"'{key}' no esta en app/catalogo.py")
+def valores(definicion,datos):
+    salida=[]
+    for p in definicion['params']:
+        v=datos.get(p['name'])
+        if v is None or v=='':
+            if p['requerido']:
+                raise HTTPException(422,f"Completa el campo: {p['label']}")
+            salida.append(None); continue
+        try:
+            if p['tipo']=='number': v=float(v) if '.' in str(v) else int(v)
+            elif p['tipo']=='date': v=date.fromisoformat(str(v)).isoformat()
+            elif p['tipo']=='time': v=time.fromisoformat(str(v)).strftime('%H:%M:%S')
+            elif p['tipo']=='datetime-local': v=datetime.fromisoformat(str(v)).strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            raise HTTPException(422,f"Formato inválido: {p['label']}") from None
+        salida.append(v)
+    if 'p_desde' in datos and 'p_hasta' in datos and datos['p_desde'] > datos['p_hasta']:
+        raise HTTPException(422,'La fecha inicial debe ser anterior o igual a la final')
+    return salida
+
+
+def definicion(grupo,key):
+    if key not in grupo: raise HTTPException(404,'Operación no disponible')
     return grupo[key]
 
+@router.get('/logica/catalogo')
+def ver_catalogo(): return catalogo.catalogo_publico()
 
-def _valores(definicion: dict, datos: dict) -> list:
-    """Ordena y valida los parametros segun el catalogo."""
-    valores = []
-    for prm in definicion["params"]:
-        v = datos.get(prm["name"])
-        if v is None or v == "":
-            if prm["requerido"]:
-                raise HTTPException(422, f"Falta el parametro '{prm['label']}'")
-            valores.append(None)
-            continue
-        try:
-            if prm["tipo"] == "number":
-                v = float(v) if "." in str(v) else int(v)
-            elif prm["tipo"] == "date":
-                v = date.fromisoformat(str(v)).isoformat()
-        except ValueError:
-            raise HTTPException(422, f"'{prm['label']}' tiene un formato invalido") from None
-        valores.append(v)
-    return valores
+@router.post('/procedimientos/{key}')
+async def procedimiento(key:str, request:Request):
+    d=definicion(catalogo.PROCEDIMIENTOS,key)
+    datos=await request.json()
+    return {'routine':d['routine'],'resultados':call_procedure(d['routine'],valores(d,datos))}
 
+@router.get('/funciones/{key}')
+def funcion(key:str,request:Request):
+    d=definicion(catalogo.FUNCIONES,key)
+    return {'routine':d['routine'],'resultado':call_function(d['routine'],valores(d,dict(request.query_params)))}
 
-@router.get("/logica/catalogo")
-def ver_catalogo():
-    return catalogo.catalogo_publico()
+@router.get('/cursores/{key}')
+def cursor(key:str,request:Request):
+    d=definicion(catalogo.CURSORES,key)
+    return {'routine':d['routine'],'resultados':call_procedure(d['routine'],valores(d,dict(request.query_params)))}
 
-
-@router.post("/procedimientos/{key}")
-async def ejecutar_procedimiento(key: str, request: Request):
-    d = _definicion(catalogo.PROCEDIMIENTOS, key)
-    datos = await request.json()
-    conjuntos = call_procedure(d["routine"], _valores(d, datos))
-    return {"routine": d["routine"], "resultados": conjuntos}
-
-
-@router.get("/funciones/{key}")
-def ejecutar_funcion(key: str, request: Request):
-    d = _definicion(catalogo.FUNCIONES, key)
-    resultado = call_function(d["routine"], _valores(d, dict(request.query_params)))
-    return {"routine": d["routine"], "resultado": resultado}
-
-
-@router.get("/cursores/{key}")
-def ejecutar_cursor(key: str):
-    d = _definicion(catalogo.CURSORES, key)
-    return {"routine": d["routine"], "resultados": call_procedure(d["routine"], [])}
-
-
-@router.post("/dml/{key}")
-async def ejecutar_dml(key: str, request: Request):
-    d = _definicion(catalogo.DML, key)
-    datos = await request.json()
-    id_material, precio = _valores(d, datos)
-    if not fetch_one("SELECT 1 AS x FROM MATERIAL_TRABAJO WHERE idMaterial = %s", (id_material,)):
-        raise HTTPException(404, f"No existe el material {id_material}")
-    execute("UPDATE MATERIAL_TRABAJO SET precio = %s WHERE idMaterial = %s", (precio, id_material))
-    return {"ok": True, "idMaterial": id_material, "precio": precio}
+@router.get('/opciones/{tabla}')
+def opciones(tabla:str):
+    tabla=tabla.upper()
+    nombres={'PERSONA':('idPersona',"CONCAT(nombre,' ',paterno)",'nombre'),
+      'RECOLECTOR':('idrecolector',"CONCAT(p.nombre,' ',p.paterno)",'nombre'),
+      'RUTA':('idRuta',"CONCAT('Ruta ',idRuta,' · Zona ',idZona)",'nombre'),
+      'ZONA':('idZona','nombre','nombre'), 'BOTADERO':('idBotadero','nombre','nombre'),
+      'TRANSPORTE':('idTransporte',"CONCAT(placa,' · ',tipo_transporte)",'nombre'),
+      'CONTENEDOR':('idContenedor',"CONCAT('Contenedor ',idContenedor,' · ',tipo)",'nombre'),
+      'MATERIAL_TRABAJO':('idMaterial','nombre','nombre')}
+    if tabla not in nombres: raise HTTPException(404,'Catálogo no permitido')
+    idcol,display,_=nombres[tabla]
+    if tabla=='RECOLECTOR':
+        sql=f'SELECT r.idrecolector AS id, {display} AS nombre FROM RECOLECTOR r JOIN PERSONA p ON p.idPersona=r.idrecolector ORDER BY r.idrecolector LIMIT 500'
+    else:
+        sql=f'SELECT `{idcol}` AS id, {display} AS nombre FROM `{tabla}` ORDER BY `{idcol}` LIMIT 500'
+    return fetch_all(sql)

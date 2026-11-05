@@ -1,87 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import DataTable from '../components/DataTable.jsx'
 import RoutineForm from '../components/RoutineForm.jsx'
 import Modal from '../components/Modal.jsx'
 
-// Un modulo de la capa 1 = tablas para consultar + rutinas de la BD para ejecutar.
-export default function Modulo({ modulo, catalogo }) {
-  const [tabla, setTabla] = useState(modulo.tablas[0])
-  const [version, setVersion] = useState(0)
-  const [abierta, setAbierta] = useState(null)
-  const [aviso, setAviso] = useState('')
-  useEffect(() => {
-    if (!aviso) return
-    const t = setTimeout(() => setAviso(''), 5000)
-    return () => clearTimeout(t)
-  }, [aviso])
-  function alGuardar(resultado) {
-    setVersion((v) => v + 1)
-    // Las funciones solo consultan: la ventana queda abierta para mostrar el resultado.
-    if (rutinaAbierta?.kind === 'funcion') return
-    setAviso(resultado?.resultados?.[0]?.[0]?.mensaje ?? 'Operación realizada.')
-    setAbierta(null)
-  }
-
-  // Aspecto del boton segun el tipo de operacion
-  function boton(r) {
-    if (r.kind === 'funcion') return { clase: 'btn-anadir btn-consulta', prefijo: '' }
-    if (r.key.startsWith('eliminar')) return { clase: 'btn-anadir btn-peligro', prefijo: '✕ ' }
-    return { clase: 'btn-anadir', prefijo: '+ ' }
-  }
-
-  const conModal = Boolean(modulo.rutinasPorTabla)
-  const claves = modulo.rutinasPorTabla?.[tabla] ?? modulo.rutinas ?? []
-  const rutinas = claves.map((k) => catalogo.find((c) => c.key === k)).filter(Boolean)
-  const rutinaAbierta = rutinas.find((r) => r.key === abierta)
-  // Claves de App.jsx que no existen en backend/app/catalogo.py (sin esto el boton desaparece en silencio)
-  const faltantes = catalogo.length > 0 ? claves.filter((k) => !catalogo.some((c) => c.key === k)) : []
-
-  return (
-    <section>
-      <h2>{modulo.titulo}</h2>
-      <p className="nota">{modulo.descripcion}</p>
-
-      <div className="barra">
-        <div className="pestanas" role="tablist">
-          {modulo.tablas.map((t) => (
-            <button key={t} role="tab" aria-selected={t === tabla}
-              className={t === tabla ? 'activa' : ''} onClick={() => setTabla(t)}>
-              {t}
-            </button>
-          ))}
-        </div>
-        {conModal && (
-          <div className="acciones">
-            {rutinas.map((r) => (
-              <button key={r.key} type="button" className={boton(r).clase} onClick={() => setAbierta(r.key)}>
-                {boton(r).prefijo}{r.titulo}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {faltantes.length > 0 && (
-        <p className="error">Falta en backend/app/catalogo.py: {faltantes.join(', ')}</p>
-      )}
-      {aviso && <p className="aviso" role="status">✓ {aviso}</p>}
-
-      <DataTable tabla={tabla} refrescar={version} />
-
-      {conModal && rutinaAbierta && (
-        <Modal titulo={rutinaAbierta.titulo} onClose={() => setAbierta(null)}>
-          <RoutineForm key={rutinaAbierta.key} item={rutinaAbierta} onDone={alGuardar} />
-        </Modal>
-      )}
-
-      {!conModal && rutinas.length > 0 && <h3 className="separador">Operaciones</h3>}
-      {!conModal && (
-        <div className="rejilla">
-          {rutinas.map((r) => (
-            <RoutineForm key={r.key} item={r} onDone={() => setVersion((v) => v + 1)} />
-          ))}
-        </div>
-      )}
-    </section>
-  )
+export default function Modulo({modulo,catalogo}){
+ const [tabla,setTabla]=useState(modulo.tablas[0]);const [abierta,setAbierta]=useState(null);const [version,setVersion]=useState(0);const [mensaje,setMensaje]=useState('')
+ const acciones=catalogo.filter(x=>x.kind==='procedimiento'&&modulo.acciones.includes(x.key))
+ const funciones=catalogo.filter(x=>x.kind==='funcion'&&modulo.funciones.includes(x.key))
+ const operacion=[...acciones,...funciones].find(x=>x.kind+':'+x.key===abierta)
+ function completado(resultado){setVersion(n=>n+1); if(operacion?.kind==='procedimiento'){setMensaje(resultado?.resultados?.[0]?.[0]?.mensaje||'La operación se realizó correctamente.');setAbierta(null)} }
+ return <>
+  <div className="page-heading"><div><span className="eyebrow">GESTIÓN OPERATIVA</span><h1>{modulo.titulo}</h1><p>{modulo.descripcion}</p></div><span className="page-heading-symbol">{modulo.icono}</span></div>
+  <div className="section-row"><div><h2>Acciones disponibles</h2><p className="section-subtitle">Selecciona una operación para abrir su formulario.</p></div></div>
+  <div className="action-grid">{[...acciones,...funciones].map((r)=><button key={r.kind+r.key} className="action-card" onClick={()=>setAbierta(r.kind+':'+r.key)}><span className={'action-icon '+(r.kind==='funcion'?'blue':'green')}>{r.kind==='funcion'?'▥':'✳'}</span><span className="action-content"><strong>{r.titulo}</strong><small>{r.descripcion}</small><em>{r.kind==='funcion'?'Consultar análisis':'Abrir formulario'} ↗</em></span></button>)}{!acciones.length&&!funciones.length&&<div className="empty-actions">Este módulo es de consulta. Explora los registros debajo.</div>}</div>
+  <div className="records-card"><div className="records-header"><div><span className="eyebrow">BASE DE DATOS</span><h2>Registros y tablas</h2><p>Selecciona una tabla para consultar sus datos actualizados.</p></div><span className="records-badge">{modulo.tablas.length} tablas</span></div>
+   <div className="table-tabs" role="tablist">{modulo.tablas.map(t=><button role="tab" aria-selected={tabla===t} className={tabla===t?'active':''} key={t} onClick={()=>setTabla(t)}>{t.replaceAll('_',' ')}</button>)}</div>
+   <DataTable tabla={tabla} refrescar={version}/>
+  </div>
+  {mensaje&&<div className="toast" role="status"><span>✓</span>{mensaje}<button onClick={()=>setMensaje('')}>×</button></div>}
+  {operacion&&<Modal titulo={operacion.titulo} onClose={()=>setAbierta(null)}><RoutineForm key={operacion.kind+operacion.key} item={operacion} onDone={completado}/></Modal>}
+ </>
 }

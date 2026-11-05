@@ -1,13 +1,8 @@
 -- ============================================================
--- SCRIPT DE CREACION Y CARGA DE DATOS PARA MySQL 8.0
+-- 01_schema.sql  |  CREACION DE TABLAS (MySQL 8.0.16+)
 -- UNIVERSO DEL DISCURSO: EMPRESA RECOLECTORA DE BASURA
--- Version ajustada segun modeloRER.pdf, paginas 1 y 2.
--- Convertido desde Oracle 10g a sintaxis MySQL 8.
 -- Restricciones 1:N mediante FK; N:M mediante tablas puente con fecha.
 -- INTEGRA es relacion ternaria (Ruta, Via, Contenedor).
--- La coherencia entre 3 o mas relaciones se verifica mediante consultas.
--- IMPORTANTE: ejecutar solo en entorno de pruebas; destruye las tablas previas.
--- Requiere MySQL 8.0.16+ (para que las restricciones CHECK se apliquen).
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS empresa_recolectora
@@ -16,6 +11,10 @@ USE empresa_recolectora;
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS HISTORIAL_ASIGNACION;
+DROP TABLE IF EXISTS DESCARGA_BOTADERO;
+DROP TABLE IF EXISTS DEVOLUCION_MATERIAL;
+DROP TABLE IF EXISTS COMPRA_MATERIAL;
 DROP TABLE IF EXISTS TRABAJA;
 DROP TABLE IF EXISTS INTEGRA;
 DROP TABLE IF EXISTS PASA_POR;
@@ -33,10 +32,6 @@ DROP TABLE IF EXISTS BOTADERO;
 DROP TABLE IF EXISTS ZONA;
 SET FOREIGN_KEY_CHECKS = 1;
 
--- ============================================================
--- CREACION DE TABLAS
--- ============================================================
-
 CREATE TABLE ZONA (
     idZona INT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
@@ -48,7 +43,11 @@ CREATE TABLE BOTADERO (
     idBotadero INT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     direccion VARCHAR(150) NOT NULL,
-    extencion_terreno VARCHAR(50) NOT NULL
+    extencion_terreno VARCHAR(50) NOT NULL,
+    extension_hectareas DECIMAL(10,2) NOT NULL DEFAULT 0,
+    capacidad_maxima_kg DECIMAL(15,2) NOT NULL DEFAULT 0,
+    capacidad_utilizada DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estado_operativo VARCHAR(50) NOT NULL DEFAULT 'Disponible'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE PERSONA (
@@ -61,14 +60,19 @@ CREATE TABLE PERSONA (
     fecha_nacimiento DATE NOT NULL,
     telefono VARCHAR(20) NOT NULL,
     direccion VARCHAR(150) NOT NULL,
-    turno VARCHAR(20) NOT NULL
+    turno VARCHAR(20) NOT NULL,
+    estado_laboral VARCHAR(100) NOT NULL DEFAULT 'Activo',
+    fecha_contratacion DATE NOT NULL DEFAULT '2024-01-01'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE MATERIAL_TRABAJO (
     idMaterial INT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     estado VARCHAR(30) NOT NULL,
-    precio DECIMAL(10,2) NOT NULL CHECK (precio >= 0)
+    precio DECIMAL(10,2) NOT NULL CHECK (precio >= 0),
+    stock_actual INT NOT NULL DEFAULT 0,
+    stock_minimo INT NOT NULL DEFAULT 5,
+    tipo_uso VARCHAR(100) NOT NULL DEFAULT 'Reutilizable'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE VIA (
@@ -76,23 +80,26 @@ CREATE TABLE VIA (
     descripcion VARCHAR(150) NOT NULL,
     calle_avenida VARCHAR(10) NOT NULL,
     idZona INT NOT NULL,
-    CONSTRAINT fk_via_zona FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
+    FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE CONTENEDOR (
     idContenedor INT PRIMARY KEY,
     tipo VARCHAR(50) NOT NULL,
     capacidad VARCHAR(30) NOT NULL,
+    capacidad_litros DECIMAL(12,2) NOT NULL DEFAULT 0,
+    capacidad_kg DECIMAL(12,2) NOT NULL DEFAULT 0,
+    estado_operativo VARCHAR(50) NOT NULL DEFAULT 'Disponible',
     tamanio VARCHAR(30) NOT NULL,
     idVia INT NOT NULL,
-    CONSTRAINT fk_contenedor_via FOREIGN KEY (idVia) REFERENCES VIA(idVia)
+    FOREIGN KEY (idVia) REFERENCES VIA(idVia)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE CONDUCTOR (
     idconductor INT PRIMARY KEY,
     nro_licencia VARCHAR(30) UNIQUE NOT NULL,
     categoria_licencia VARCHAR(10) NOT NULL,
-    CONSTRAINT fk_conductor_empleado FOREIGN KEY (idconductor) REFERENCES PERSONA(idPersona)
+    FOREIGN KEY (idconductor) REFERENCES PERSONA(idPersona)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE TRANSPORTE (
@@ -100,11 +107,14 @@ CREATE TABLE TRANSPORTE (
     placa VARCHAR(15) UNIQUE NOT NULL,
     tipo_transporte VARCHAR(50) NOT NULL,
     capacidad VARCHAR(30) NOT NULL,
-    estado VARCHAR(30) NOT NULL,
+    estado VARCHAR(30) NOT NULL DEFAULT 'Operativo',
+    -- CORREGIDO: antes no tenia DEFAULT y los INSERT no lo enviaban (error 1364)
+    capacidad_kg DECIMAL(12,2) NOT NULL DEFAULT 0,
+    carga_actual_kg DECIMAL(12,2) NOT NULL DEFAULT 0,
     idconductor INT NOT NULL,
     idBotadero INT NOT NULL,
-    CONSTRAINT fk_transporte_conductor FOREIGN KEY (idconductor) REFERENCES CONDUCTOR(idconductor),
-    CONSTRAINT fk_transporte_botadero FOREIGN KEY (idBotadero) REFERENCES BOTADERO(idBotadero)
+    FOREIGN KEY (idconductor) REFERENCES CONDUCTOR(idconductor),
+    FOREIGN KEY (idBotadero) REFERENCES BOTADERO(idBotadero)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE RUTA (
@@ -112,7 +122,9 @@ CREATE TABLE RUTA (
     distancia_recorrida VARCHAR(30) NOT NULL,
     Horario VARCHAR(50) NOT NULL,
     idZona INT NOT NULL,
-    CONSTRAINT fk_ruta_zona FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
+    distancia_km DECIMAL(12,2) NOT NULL DEFAULT 0,
+    estado_operativo VARCHAR(50) NOT NULL DEFAULT 'Activa',
+    FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE RECOLECTOR (
@@ -120,8 +132,8 @@ CREATE TABLE RECOLECTOR (
     tipo_empleado VARCHAR(50) NOT NULL,
     sueldo DECIMAL(10,2) NOT NULL CHECK (sueldo >= 0),
     idTransporte INT NOT NULL,
-    CONSTRAINT fk_recolector_empleado FOREIGN KEY (idrecolector) REFERENCES PERSONA(idPersona),
-    CONSTRAINT fk_recolector_transporte FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte)
+    FOREIGN KEY (idrecolector) REFERENCES PERSONA(idPersona),
+    FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE DISPONE (
@@ -129,18 +141,27 @@ CREATE TABLE DISPONE (
     idMaterial INT NOT NULL,
     fecha DATE NOT NULL,
     cantidad INT NOT NULL CHECK (cantidad > 0),
+    precio_unitario_asignacion DECIMAL(10,2) NOT NULL DEFAULT 0,
     PRIMARY KEY (idPersona, idMaterial, fecha),
-    CONSTRAINT fk_dispone_empleado FOREIGN KEY (idPersona) REFERENCES PERSONA(idPersona),
-    CONSTRAINT fk_dispone_material FOREIGN KEY (idMaterial) REFERENCES MATERIAL_TRABAJO(idMaterial)
+    FOREIGN KEY (idPersona) REFERENCES PERSONA(idPersona),
+    FOREIGN KEY (idMaterial) REFERENCES MATERIAL_TRABAJO(idMaterial)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE RECOLECTA (
+    idRecoleccion BIGINT AUTO_INCREMENT PRIMARY KEY,
     idrecolector INT NOT NULL,
     idContenedor INT NOT NULL,
     fecha DATE NOT NULL,
-    PRIMARY KEY (idrecolector, idContenedor, fecha),
-    CONSTRAINT fk_recolecta_recolector FOREIGN KEY (idrecolector) REFERENCES RECOLECTOR(idrecolector),
-    CONSTRAINT fk_recolecta_contenedor FOREIGN KEY (idContenedor) REFERENCES CONTENEDOR(idContenedor)
+    cantidad_kg DECIMAL(12,2),
+    idTransporte INT NULL,
+    idRuta INT NULL,
+    hora_recoleccion TIME,
+    INDEX idx_recolecta_recolector_fecha (idrecolector, fecha),
+    INDEX idx_recolecta_contenedor_fecha (idContenedor, fecha),
+    FOREIGN KEY (idrecolector) REFERENCES RECOLECTOR(idrecolector),
+    FOREIGN KEY (idContenedor) REFERENCES CONTENEDOR(idContenedor),
+    FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte),
+    FOREIGN KEY (idRuta) REFERENCES RUTA(idRuta)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE PASA_POR (
@@ -148,8 +169,8 @@ CREATE TABLE PASA_POR (
     idRuta INT NOT NULL,
     fecha DATE NOT NULL,
     PRIMARY KEY (idTransporte, idRuta, fecha),
-    CONSTRAINT fk_pasapor_transporte FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte),
-    CONSTRAINT fk_pasapor_ruta FOREIGN KEY (idRuta) REFERENCES RUTA(idRuta)
+    FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte),
+    FOREIGN KEY (idRuta) REFERENCES RUTA(idRuta)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE INTEGRA (
@@ -157,9 +178,9 @@ CREATE TABLE INTEGRA (
     idVia INT NOT NULL,
     idContenedor INT NOT NULL,
     PRIMARY KEY (idRuta, idVia, idContenedor),
-    CONSTRAINT fk_integra_ruta FOREIGN KEY (idRuta) REFERENCES RUTA(idRuta),
-    CONSTRAINT fk_integra_via FOREIGN KEY (idVia) REFERENCES VIA(idVia),
-    CONSTRAINT fk_integra_contenedor FOREIGN KEY (idContenedor) REFERENCES CONTENEDOR(idContenedor)
+    FOREIGN KEY (idRuta) REFERENCES RUTA(idRuta),
+    FOREIGN KEY (idVia) REFERENCES VIA(idVia),
+    FOREIGN KEY (idContenedor) REFERENCES CONTENEDOR(idContenedor)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Segun modelo relacional: TRABAJA(idrecolector, idZona, fecha).
@@ -168,8 +189,60 @@ CREATE TABLE TRABAJA (
     idZona INT NOT NULL,
     fecha DATE NOT NULL,
     PRIMARY KEY (idrecolector, idZona, fecha),
-    CONSTRAINT fk_trabaja_recolector FOREIGN KEY (idrecolector) REFERENCES RECOLECTOR(idrecolector),
-    CONSTRAINT fk_trabaja_zona FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
+    FOREIGN KEY (idrecolector) REFERENCES RECOLECTOR(idrecolector),
+    FOREIGN KEY (idZona) REFERENCES ZONA(idZona)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE COMPRA_MATERIAL (
+    idCompra INT AUTO_INCREMENT PRIMARY KEY NOT NULL,
+    idMaterial INT NOT NULL,
+    proveedor VARCHAR(100) NOT NULL,
+    fecha DATE NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario DECIMAL(10, 2) NOT NULL,
+    total DECIMAL(12, 2) NOT NULL,
+    FOREIGN KEY (idMaterial) REFERENCES MATERIAL_TRABAJO(idMaterial),
+    CHECK (cantidad > 0 AND precio_unitario >= 0 AND total >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE DEVOLUCION_MATERIAL (
+    idDEvolucion INT AUTO_INCREMENT PRIMARY KEY,
+    idPersona INT NOT NULL,
+    idMaterial INT NOT NULL,
+    fecha_asignacion DATE NOT NULL,
+    fecha_devolucion DATE NOT NULL,
+    cantidad_devuelta INT NOT NULL,
+    cantidad_danada INT NOT NULL,
+    estado_devolucion VARCHAR(30),
+    FOREIGN KEY (idPersona, idMaterial, fecha_asignacion) REFERENCES DISPONE(idPersona, idMaterial, fecha),
+    CHECK (cantidad_devuelta > 0 AND cantidad_danada >= 0 AND cantidad_danada <= cantidad_devuelta),
+    CHECK (fecha_devolucion >= fecha_asignacion)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE DESCARGA_BOTADERO (
+    idDescarga INT AUTO_INCREMENT PRIMARY KEY,
+    idTransporte INT NOT NULL,
+    idBotadero INT NOT NULL,
+    fecha DATETIME NOT NULL,
+    cantidad_kg DECIMAL(12,2) NOT NULL,
+    estado VARCHAR(20) NOT NULL DEFAULT 'Confirmada',
+    FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte),
+    FOREIGN KEY (idBotadero) REFERENCES BOTADERO(idBotadero),
+    CHECK (cantidad_kg > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE HISTORIAL_ASIGNACION (
+    idHistorial INT AUTO_INCREMENT PRIMARY KEY,
+    idrecolector INT NOT NULL,
+    idTransporte INT NOT NULL,
+    idZona INT NOT NULL,
+    fecha_inicio DATETIME NOT NULL,
+    fecha_fin DATETIME,
+    motivo VARCHAR(255),
+    FOREIGN KEY (idrecolector) REFERENCES RECOLECTOR(idrecolector),
+    FOREIGN KEY (idTransporte) REFERENCES TRANSPORTE(idTransporte),
+    FOREIGN KEY (idZona) REFERENCES ZONA(idZona),
+    CHECK (fecha_fin IS NULL OR fecha_fin >= fecha_inicio)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
@@ -2227,5 +2300,1188 @@ INSERT INTO RECOLECTA (idrecolector, idContenedor, fecha) VALUES (152, 13, DATE 
 INSERT INTO RECOLECTA (idrecolector, idContenedor, fecha) VALUES (153, 85, DATE '2026-09-28');
 INSERT INTO RECOLECTA (idrecolector, idContenedor, fecha) VALUES (154, 27, DATE '2026-09-28');
 INSERT INTO RECOLECTA (idrecolector, idContenedor, fecha) VALUES (157, 99, DATE '2026-09-28');
+
+
+-- ====================================================================
+-- AMPLIACION DE DATOS DE PRUEBA Y CORRECCION DE CARDINALIDADES
+-- Los pesos, capacidades, fechas de compra y condiciones son SIMULADOS.
+-- No representan mediciones fisicas ni datos historicos reales.
+-- ====================================================================
+
+-- Backfill de las columnas NOT NULL nuevas cuyos INSERT historicos
+-- no suministraban valores. Se conservan los 200 empleados y otros
+-- registros de origen, salvo la adicion de atributos calculados.
+UPDATE BOTADERO
+SET extension_hectareas = CAST(SUBSTRING_INDEX(extencion_terreno, ' ', 1) AS DECIMAL(10,2)),
+    capacidad_maxima_kg = CAST(SUBSTRING_INDEX(extencion_terreno, ' ', 1) AS DECIMAL(15,2)) * 500000,
+    capacidad_utilizada = 0,
+    estado_operativo = 'Disponible';
+
+UPDATE PERSONA
+SET fecha_contratacion = GREATEST('2020-01-01', DATE_ADD(fecha_nacimiento, INTERVAL 19 YEAR)),
+    estado_laboral = 'Activo';
+
+UPDATE MATERIAL_TRABAJO
+SET stock_minimo = 5,
+    tipo_uso = CASE WHEN LOWER(nombre) REGEXP 'bolsas|nitrilo|desinfectante|mascarilla|cinta reflectiva|calcetines'
+        THEN 'Consumible' ELSE 'Reutilizable' END;
+
+UPDATE CONTENEDOR
+SET capacidad_litros = CAST(SUBSTRING_INDEX(capacidad, ' ', 1) AS DECIMAL(12,2)) *
+    CASE WHEN capacidad LIKE '%m3' THEN 1000 ELSE 1 END,
+    -- Equivalencia teorica SIMULADA 0.20 kg/L (no se deduce del volumen)
+    capacidad_kg = CAST(SUBSTRING_INDEX(capacidad, ' ', 1) AS DECIMAL(12,2)) *
+    CASE WHEN capacidad LIKE '%m3' THEN 1000 ELSE 1 END * 0.20,
+    estado_operativo = 'Disponible';
+
+UPDATE TRANSPORTE
+SET capacidad_kg = CAST(SUBSTRING_INDEX(capacidad, ' ', 1) AS DECIMAL(12,2)) * 1000,
+    carga_actual_kg = 0;
+
+UPDATE RUTA
+SET distancia_km = CAST(SUBSTRING_INDEX(distancia_recorrida, ' ', 1) AS DECIMAL(12,2)),
+    estado_operativo = 'Activa';
+
+UPDATE DISPONE AS d
+JOIN MATERIAL_TRABAJO AS m ON m.idMaterial = d.idMaterial
+SET d.precio_unitario_asignacion = m.precio;
+
+-- 60 zonas originalmente carecian de vias/rutas/contenedores en los datos.
+-- Se crean dos vias/rutas/contenedores por cada zona 41..100,
+-- asegurando ejemplos de la relacion 1:N y de la relacion ternaria.
+
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (101, 'Calle de prueba 1 en zona 41', 'Calle', 41);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (101, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 101);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (101, '14.7 km', '07:00 - 13:00', 41, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (101, 101, 101);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (102, 'Avenida de prueba 2 en zona 41', 'Avenida', 41);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (102, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 102);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (102, '15.4 km', '14:00 - 20:00', 41, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (102, 102, 102);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (103, 'Calle de prueba 1 en zona 42', 'Calle', 42);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (103, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 103);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (103, '15.4 km', '07:00 - 13:00', 42, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (103, 103, 103);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (104, 'Avenida de prueba 2 en zona 42', 'Avenida', 42);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (104, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 104);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (104, '16.1 km', '14:00 - 20:00', 42, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (104, 104, 104);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (105, 'Calle de prueba 1 en zona 43', 'Calle', 43);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (105, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 105);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (105, '16.1 km', '07:00 - 13:00', 43, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (105, 105, 105);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (106, 'Avenida de prueba 2 en zona 43', 'Avenida', 43);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (106, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 106);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (106, '16.8 km', '14:00 - 20:00', 43, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (106, 106, 106);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (107, 'Calle de prueba 1 en zona 44', 'Calle', 44);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (107, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 107);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (107, '16.8 km', '07:00 - 13:00', 44, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (107, 107, 107);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (108, 'Avenida de prueba 2 en zona 44', 'Avenida', 44);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (108, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 108);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (108, '7.0 km', '14:00 - 20:00', 44, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (108, 108, 108);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (109, 'Calle de prueba 1 en zona 45', 'Calle', 45);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (109, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 109);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (109, '7.0 km', '07:00 - 13:00', 45, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (109, 109, 109);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (110, 'Avenida de prueba 2 en zona 45', 'Avenida', 45);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (110, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 110);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (110, '7.7 km', '14:00 - 20:00', 45, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (110, 110, 110);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (111, 'Calle de prueba 1 en zona 46', 'Calle', 46);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (111, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 111);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (111, '7.7 km', '07:00 - 13:00', 46, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (111, 111, 111);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (112, 'Avenida de prueba 2 en zona 46', 'Avenida', 46);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (112, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 112);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (112, '8.4 km', '14:00 - 20:00', 46, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (112, 112, 112);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (113, 'Calle de prueba 1 en zona 47', 'Calle', 47);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (113, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 113);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (113, '8.4 km', '07:00 - 13:00', 47, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (113, 113, 113);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (114, 'Avenida de prueba 2 en zona 47', 'Avenida', 47);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (114, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 114);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (114, '9.1 km', '14:00 - 20:00', 47, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (114, 114, 114);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (115, 'Calle de prueba 1 en zona 48', 'Calle', 48);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (115, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 115);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (115, '9.1 km', '07:00 - 13:00', 48, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (115, 115, 115);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (116, 'Avenida de prueba 2 en zona 48', 'Avenida', 48);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (116, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 116);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (116, '9.8 km', '14:00 - 20:00', 48, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (116, 116, 116);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (117, 'Calle de prueba 1 en zona 49', 'Calle', 49);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (117, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 117);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (117, '9.8 km', '07:00 - 13:00', 49, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (117, 117, 117);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (118, 'Avenida de prueba 2 en zona 49', 'Avenida', 49);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (118, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 118);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (118, '10.5 km', '14:00 - 20:00', 49, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (118, 118, 118);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (119, 'Calle de prueba 1 en zona 50', 'Calle', 50);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (119, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 119);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (119, '10.5 km', '07:00 - 13:00', 50, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (119, 119, 119);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (120, 'Avenida de prueba 2 en zona 50', 'Avenida', 50);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (120, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 120);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (120, '11.2 km', '14:00 - 20:00', 50, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (120, 120, 120);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (121, 'Calle de prueba 1 en zona 51', 'Calle', 51);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (121, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 121);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (121, '11.2 km', '07:00 - 13:00', 51, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (121, 121, 121);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (122, 'Avenida de prueba 2 en zona 51', 'Avenida', 51);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (122, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 122);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (122, '11.9 km', '14:00 - 20:00', 51, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (122, 122, 122);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (123, 'Calle de prueba 1 en zona 52', 'Calle', 52);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (123, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 123);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (123, '11.9 km', '07:00 - 13:00', 52, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (123, 123, 123);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (124, 'Avenida de prueba 2 en zona 52', 'Avenida', 52);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (124, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 124);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (124, '12.6 km', '14:00 - 20:00', 52, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (124, 124, 124);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (125, 'Calle de prueba 1 en zona 53', 'Calle', 53);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (125, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 125);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (125, '12.6 km', '07:00 - 13:00', 53, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (125, 125, 125);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (126, 'Avenida de prueba 2 en zona 53', 'Avenida', 53);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (126, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 126);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (126, '13.3 km', '14:00 - 20:00', 53, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (126, 126, 126);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (127, 'Calle de prueba 1 en zona 54', 'Calle', 54);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (127, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 127);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (127, '13.3 km', '07:00 - 13:00', 54, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (127, 127, 127);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (128, 'Avenida de prueba 2 en zona 54', 'Avenida', 54);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (128, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 128);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (128, '14.0 km', '14:00 - 20:00', 54, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (128, 128, 128);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (129, 'Calle de prueba 1 en zona 55', 'Calle', 55);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (129, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 129);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (129, '14.0 km', '07:00 - 13:00', 55, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (129, 129, 129);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (130, 'Avenida de prueba 2 en zona 55', 'Avenida', 55);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (130, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 130);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (130, '14.7 km', '14:00 - 20:00', 55, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (130, 130, 130);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (131, 'Calle de prueba 1 en zona 56', 'Calle', 56);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (131, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 131);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (131, '14.7 km', '07:00 - 13:00', 56, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (131, 131, 131);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (132, 'Avenida de prueba 2 en zona 56', 'Avenida', 56);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (132, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 132);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (132, '15.4 km', '14:00 - 20:00', 56, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (132, 132, 132);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (133, 'Calle de prueba 1 en zona 57', 'Calle', 57);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (133, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 133);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (133, '15.4 km', '07:00 - 13:00', 57, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (133, 133, 133);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (134, 'Avenida de prueba 2 en zona 57', 'Avenida', 57);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (134, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 134);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (134, '16.1 km', '14:00 - 20:00', 57, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (134, 134, 134);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (135, 'Calle de prueba 1 en zona 58', 'Calle', 58);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (135, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 135);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (135, '16.1 km', '07:00 - 13:00', 58, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (135, 135, 135);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (136, 'Avenida de prueba 2 en zona 58', 'Avenida', 58);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (136, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 136);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (136, '16.8 km', '14:00 - 20:00', 58, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (136, 136, 136);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (137, 'Calle de prueba 1 en zona 59', 'Calle', 59);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (137, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 137);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (137, '16.8 km', '07:00 - 13:00', 59, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (137, 137, 137);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (138, 'Avenida de prueba 2 en zona 59', 'Avenida', 59);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (138, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 138);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (138, '7.0 km', '14:00 - 20:00', 59, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (138, 138, 138);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (139, 'Calle de prueba 1 en zona 60', 'Calle', 60);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (139, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 139);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (139, '7.0 km', '07:00 - 13:00', 60, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (139, 139, 139);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (140, 'Avenida de prueba 2 en zona 60', 'Avenida', 60);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (140, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 140);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (140, '7.7 km', '14:00 - 20:00', 60, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (140, 140, 140);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (141, 'Calle de prueba 1 en zona 61', 'Calle', 61);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (141, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 141);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (141, '7.7 km', '07:00 - 13:00', 61, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (141, 141, 141);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (142, 'Avenida de prueba 2 en zona 61', 'Avenida', 61);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (142, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 142);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (142, '8.4 km', '14:00 - 20:00', 61, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (142, 142, 142);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (143, 'Calle de prueba 1 en zona 62', 'Calle', 62);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (143, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 143);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (143, '8.4 km', '07:00 - 13:00', 62, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (143, 143, 143);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (144, 'Avenida de prueba 2 en zona 62', 'Avenida', 62);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (144, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 144);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (144, '9.1 km', '14:00 - 20:00', 62, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (144, 144, 144);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (145, 'Calle de prueba 1 en zona 63', 'Calle', 63);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (145, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 145);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (145, '9.1 km', '07:00 - 13:00', 63, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (145, 145, 145);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (146, 'Avenida de prueba 2 en zona 63', 'Avenida', 63);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (146, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 146);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (146, '9.8 km', '14:00 - 20:00', 63, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (146, 146, 146);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (147, 'Calle de prueba 1 en zona 64', 'Calle', 64);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (147, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 147);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (147, '9.8 km', '07:00 - 13:00', 64, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (147, 147, 147);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (148, 'Avenida de prueba 2 en zona 64', 'Avenida', 64);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (148, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 148);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (148, '10.5 km', '14:00 - 20:00', 64, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (148, 148, 148);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (149, 'Calle de prueba 1 en zona 65', 'Calle', 65);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (149, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 149);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (149, '10.5 km', '07:00 - 13:00', 65, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (149, 149, 149);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (150, 'Avenida de prueba 2 en zona 65', 'Avenida', 65);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (150, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 150);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (150, '11.2 km', '14:00 - 20:00', 65, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (150, 150, 150);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (151, 'Calle de prueba 1 en zona 66', 'Calle', 66);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (151, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 151);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (151, '11.2 km', '07:00 - 13:00', 66, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (151, 151, 151);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (152, 'Avenida de prueba 2 en zona 66', 'Avenida', 66);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (152, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 152);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (152, '11.9 km', '14:00 - 20:00', 66, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (152, 152, 152);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (153, 'Calle de prueba 1 en zona 67', 'Calle', 67);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (153, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 153);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (153, '11.9 km', '07:00 - 13:00', 67, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (153, 153, 153);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (154, 'Avenida de prueba 2 en zona 67', 'Avenida', 67);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (154, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 154);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (154, '12.6 km', '14:00 - 20:00', 67, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (154, 154, 154);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (155, 'Calle de prueba 1 en zona 68', 'Calle', 68);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (155, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 155);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (155, '12.6 km', '07:00 - 13:00', 68, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (155, 155, 155);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (156, 'Avenida de prueba 2 en zona 68', 'Avenida', 68);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (156, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 156);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (156, '13.3 km', '14:00 - 20:00', 68, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (156, 156, 156);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (157, 'Calle de prueba 1 en zona 69', 'Calle', 69);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (157, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 157);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (157, '13.3 km', '07:00 - 13:00', 69, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (157, 157, 157);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (158, 'Avenida de prueba 2 en zona 69', 'Avenida', 69);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (158, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 158);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (158, '14.0 km', '14:00 - 20:00', 69, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (158, 158, 158);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (159, 'Calle de prueba 1 en zona 70', 'Calle', 70);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (159, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 159);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (159, '14.0 km', '07:00 - 13:00', 70, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (159, 159, 159);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (160, 'Avenida de prueba 2 en zona 70', 'Avenida', 70);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (160, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 160);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (160, '14.7 km', '14:00 - 20:00', 70, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (160, 160, 160);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (161, 'Calle de prueba 1 en zona 71', 'Calle', 71);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (161, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 161);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (161, '14.7 km', '07:00 - 13:00', 71, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (161, 161, 161);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (162, 'Avenida de prueba 2 en zona 71', 'Avenida', 71);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (162, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 162);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (162, '15.4 km', '14:00 - 20:00', 71, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (162, 162, 162);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (163, 'Calle de prueba 1 en zona 72', 'Calle', 72);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (163, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 163);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (163, '15.4 km', '07:00 - 13:00', 72, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (163, 163, 163);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (164, 'Avenida de prueba 2 en zona 72', 'Avenida', 72);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (164, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 164);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (164, '16.1 km', '14:00 - 20:00', 72, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (164, 164, 164);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (165, 'Calle de prueba 1 en zona 73', 'Calle', 73);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (165, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 165);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (165, '16.1 km', '07:00 - 13:00', 73, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (165, 165, 165);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (166, 'Avenida de prueba 2 en zona 73', 'Avenida', 73);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (166, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 166);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (166, '16.8 km', '14:00 - 20:00', 73, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (166, 166, 166);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (167, 'Calle de prueba 1 en zona 74', 'Calle', 74);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (167, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 167);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (167, '16.8 km', '07:00 - 13:00', 74, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (167, 167, 167);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (168, 'Avenida de prueba 2 en zona 74', 'Avenida', 74);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (168, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 168);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (168, '7.0 km', '14:00 - 20:00', 74, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (168, 168, 168);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (169, 'Calle de prueba 1 en zona 75', 'Calle', 75);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (169, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 169);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (169, '7.0 km', '07:00 - 13:00', 75, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (169, 169, 169);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (170, 'Avenida de prueba 2 en zona 75', 'Avenida', 75);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (170, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 170);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (170, '7.7 km', '14:00 - 20:00', 75, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (170, 170, 170);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (171, 'Calle de prueba 1 en zona 76', 'Calle', 76);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (171, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 171);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (171, '7.7 km', '07:00 - 13:00', 76, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (171, 171, 171);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (172, 'Avenida de prueba 2 en zona 76', 'Avenida', 76);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (172, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 172);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (172, '8.4 km', '14:00 - 20:00', 76, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (172, 172, 172);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (173, 'Calle de prueba 1 en zona 77', 'Calle', 77);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (173, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 173);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (173, '8.4 km', '07:00 - 13:00', 77, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (173, 173, 173);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (174, 'Avenida de prueba 2 en zona 77', 'Avenida', 77);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (174, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 174);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (174, '9.1 km', '14:00 - 20:00', 77, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (174, 174, 174);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (175, 'Calle de prueba 1 en zona 78', 'Calle', 78);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (175, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 175);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (175, '9.1 km', '07:00 - 13:00', 78, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (175, 175, 175);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (176, 'Avenida de prueba 2 en zona 78', 'Avenida', 78);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (176, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 176);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (176, '9.8 km', '14:00 - 20:00', 78, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (176, 176, 176);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (177, 'Calle de prueba 1 en zona 79', 'Calle', 79);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (177, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 177);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (177, '9.8 km', '07:00 - 13:00', 79, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (177, 177, 177);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (178, 'Avenida de prueba 2 en zona 79', 'Avenida', 79);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (178, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 178);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (178, '10.5 km', '14:00 - 20:00', 79, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (178, 178, 178);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (179, 'Calle de prueba 1 en zona 80', 'Calle', 80);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (179, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 179);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (179, '10.5 km', '07:00 - 13:00', 80, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (179, 179, 179);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (180, 'Avenida de prueba 2 en zona 80', 'Avenida', 80);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (180, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 180);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (180, '11.2 km', '14:00 - 20:00', 80, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (180, 180, 180);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (181, 'Calle de prueba 1 en zona 81', 'Calle', 81);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (181, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 181);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (181, '11.2 km', '07:00 - 13:00', 81, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (181, 181, 181);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (182, 'Avenida de prueba 2 en zona 81', 'Avenida', 81);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (182, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 182);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (182, '11.9 km', '14:00 - 20:00', 81, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (182, 182, 182);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (183, 'Calle de prueba 1 en zona 82', 'Calle', 82);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (183, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 183);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (183, '11.9 km', '07:00 - 13:00', 82, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (183, 183, 183);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (184, 'Avenida de prueba 2 en zona 82', 'Avenida', 82);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (184, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 184);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (184, '12.6 km', '14:00 - 20:00', 82, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (184, 184, 184);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (185, 'Calle de prueba 1 en zona 83', 'Calle', 83);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (185, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 185);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (185, '12.6 km', '07:00 - 13:00', 83, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (185, 185, 185);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (186, 'Avenida de prueba 2 en zona 83', 'Avenida', 83);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (186, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 186);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (186, '13.3 km', '14:00 - 20:00', 83, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (186, 186, 186);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (187, 'Calle de prueba 1 en zona 84', 'Calle', 84);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (187, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 187);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (187, '13.3 km', '07:00 - 13:00', 84, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (187, 187, 187);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (188, 'Avenida de prueba 2 en zona 84', 'Avenida', 84);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (188, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 188);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (188, '14.0 km', '14:00 - 20:00', 84, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (188, 188, 188);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (189, 'Calle de prueba 1 en zona 85', 'Calle', 85);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (189, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 189);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (189, '14.0 km', '07:00 - 13:00', 85, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (189, 189, 189);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (190, 'Avenida de prueba 2 en zona 85', 'Avenida', 85);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (190, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 190);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (190, '14.7 km', '14:00 - 20:00', 85, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (190, 190, 190);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (191, 'Calle de prueba 1 en zona 86', 'Calle', 86);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (191, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 191);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (191, '14.7 km', '07:00 - 13:00', 86, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (191, 191, 191);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (192, 'Avenida de prueba 2 en zona 86', 'Avenida', 86);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (192, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 192);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (192, '15.4 km', '14:00 - 20:00', 86, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (192, 192, 192);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (193, 'Calle de prueba 1 en zona 87', 'Calle', 87);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (193, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 193);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (193, '15.4 km', '07:00 - 13:00', 87, 15.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (193, 193, 193);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (194, 'Avenida de prueba 2 en zona 87', 'Avenida', 87);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (194, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 194);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (194, '16.1 km', '14:00 - 20:00', 87, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (194, 194, 194);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (195, 'Calle de prueba 1 en zona 88', 'Calle', 88);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (195, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 195);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (195, '16.1 km', '07:00 - 13:00', 88, 16.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (195, 195, 195);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (196, 'Avenida de prueba 2 en zona 88', 'Avenida', 88);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (196, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 196);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (196, '16.8 km', '14:00 - 20:00', 88, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (196, 196, 196);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (197, 'Calle de prueba 1 en zona 89', 'Calle', 89);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (197, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 197);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (197, '16.8 km', '07:00 - 13:00', 89, 16.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (197, 197, 197);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (198, 'Avenida de prueba 2 en zona 89', 'Avenida', 89);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (198, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 198);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (198, '7.0 km', '14:00 - 20:00', 89, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (198, 198, 198);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (199, 'Calle de prueba 1 en zona 90', 'Calle', 90);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (199, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 199);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (199, '7.0 km', '07:00 - 13:00', 90, 7.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (199, 199, 199);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (200, 'Avenida de prueba 2 en zona 90', 'Avenida', 90);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (200, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 200);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (200, '7.7 km', '14:00 - 20:00', 90, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (200, 200, 200);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (201, 'Calle de prueba 1 en zona 91', 'Calle', 91);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (201, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 201);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (201, '7.7 km', '07:00 - 13:00', 91, 7.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (201, 201, 201);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (202, 'Avenida de prueba 2 en zona 91', 'Avenida', 91);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (202, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 202);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (202, '8.4 km', '14:00 - 20:00', 91, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (202, 202, 202);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (203, 'Calle de prueba 1 en zona 92', 'Calle', 92);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (203, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 203);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (203, '8.4 km', '07:00 - 13:00', 92, 8.40, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (203, 203, 203);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (204, 'Avenida de prueba 2 en zona 92', 'Avenida', 92);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (204, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 204);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (204, '9.1 km', '14:00 - 20:00', 92, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (204, 204, 204);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (205, 'Calle de prueba 1 en zona 93', 'Calle', 93);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (205, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 205);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (205, '9.1 km', '07:00 - 13:00', 93, 9.10, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (205, 205, 205);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (206, 'Avenida de prueba 2 en zona 93', 'Avenida', 93);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (206, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 206);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (206, '9.8 km', '14:00 - 20:00', 93, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (206, 206, 206);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (207, 'Calle de prueba 1 en zona 94', 'Calle', 94);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (207, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 207);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (207, '9.8 km', '07:00 - 13:00', 94, 9.80, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (207, 207, 207);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (208, 'Avenida de prueba 2 en zona 94', 'Avenida', 94);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (208, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 208);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (208, '10.5 km', '14:00 - 20:00', 94, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (208, 208, 208);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (209, 'Calle de prueba 1 en zona 95', 'Calle', 95);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (209, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 209);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (209, '10.5 km', '07:00 - 13:00', 95, 10.50, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (209, 209, 209);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (210, 'Avenida de prueba 2 en zona 95', 'Avenida', 95);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (210, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 210);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (210, '11.2 km', '14:00 - 20:00', 95, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (210, 210, 210);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (211, 'Calle de prueba 1 en zona 96', 'Calle', 96);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (211, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 211);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (211, '11.2 km', '07:00 - 13:00', 96, 11.20, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (211, 211, 211);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (212, 'Avenida de prueba 2 en zona 96', 'Avenida', 96);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (212, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 212);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (212, '11.9 km', '14:00 - 20:00', 96, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (212, 212, 212);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (213, 'Calle de prueba 1 en zona 97', 'Calle', 97);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (213, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 213);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (213, '11.9 km', '07:00 - 13:00', 97, 11.90, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (213, 213, 213);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (214, 'Avenida de prueba 2 en zona 97', 'Avenida', 97);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (214, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 214);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (214, '12.6 km', '14:00 - 20:00', 97, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (214, 214, 214);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (215, 'Calle de prueba 1 en zona 98', 'Calle', 98);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (215, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 215);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (215, '12.6 km', '07:00 - 13:00', 98, 12.60, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (215, 215, 215);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (216, 'Avenida de prueba 2 en zona 98', 'Avenida', 98);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (216, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 216);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (216, '13.3 km', '14:00 - 20:00', 98, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (216, 216, 216);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (217, 'Calle de prueba 1 en zona 99', 'Calle', 99);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (217, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 217);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (217, '13.3 km', '07:00 - 13:00', 99, 13.30, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (217, 217, 217);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (218, 'Avenida de prueba 2 en zona 99', 'Avenida', 99);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (218, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 218);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (218, '14.0 km', '14:00 - 20:00', 99, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (218, 218, 218);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (219, 'Calle de prueba 1 en zona 100', 'Calle', 100);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (219, 'Mixto (negro)', '660 L', 660, 132.00, 'Disponible', 'Mediano', 219);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (219, '14.0 km', '07:00 - 13:00', 100, 14.00, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (219, 219, 219);
+INSERT INTO VIA (idVia, descripcion, calle_avenida, idZona) VALUES (220, 'Avenida de prueba 2 en zona 100', 'Avenida', 100);
+INSERT INTO CONTENEDOR (idContenedor, tipo, capacidad, capacidad_litros, capacidad_kg, estado_operativo, tamanio, idVia) VALUES (220, 'Mixto (negro)', '1100 L', 1100, 220.00, 'Disponible', 'Mediano', 220);
+INSERT INTO RUTA (idRuta, distancia_recorrida, Horario, idZona, distancia_km, estado_operativo) VALUES (220, '14.7 km', '14:00 - 20:00', 100, 14.70, 'Activa');
+INSERT INTO INTEGRA (idRuta, idVia, idContenedor) VALUES (220, 220, 220);
+
+-- Sincronizar el atributo derivado cantidad_calles con las vias
+-- que efectivamente existen (evita cantidades declaradas inconsistentes).
+UPDATE ZONA AS z
+SET z.cantidad_calles = (
+    SELECT COUNT(*) FROM VIA AS v WHERE v.idZona = z.idZona
+);
+
+-- Backfill de RECOLECTA con el transporte y la ruta existentes
+-- en PASA_POR durante la misma fecha. Todas las 224 recolecciones
+-- originales coinciden con TRABAJA, INTEGRA y la zona de la ruta.
+-- Hora y kg se completan solo como DATOS DE PRUEBA sinteticos.
+UPDATE RECOLECTA AS rc
+JOIN RECOLECTOR AS r ON r.idrecolector = rc.idrecolector
+JOIN PASA_POR AS pp
+  ON pp.idTransporte = r.idTransporte AND pp.fecha = rc.fecha
+JOIN RUTA AS ru ON ru.idRuta = pp.idRuta
+JOIN CONTENEDOR AS c ON c.idContenedor = rc.idContenedor
+JOIN VIA AS v ON v.idVia = c.idVia AND v.idZona = ru.idZona
+JOIN INTEGRA AS i ON i.idRuta = ru.idRuta
+  AND i.idContenedor = rc.idContenedor AND i.idVia = v.idVia
+SET rc.idTransporte = pp.idTransporte,
+    rc.idRuta = pp.idRuta,
+    rc.hora_recoleccion = TIME(DATE_ADD(
+       CONCAT(rc.fecha, ' ', SUBSTRING_INDEX(ru.Horario, ' - ', 1), ':00'),
+       INTERVAL MOD(rc.idContenedor * 7, 180) MINUTE)),
+    rc.cantidad_kg = ROUND(c.capacidad_kg *
+       (0.26 + MOD(rc.idrecolector + rc.idContenedor, 16) / 100), 2);
+
+-- En la base de pruebas las 224 filas son enlazables; ahora
+-- el transporte y ruta se convierten en obligatorios.
+ALTER TABLE RECOLECTA
+    MODIFY COLUMN idTransporte INT NOT NULL,
+    MODIFY COLUMN idRuta INT NOT NULL,
+    MODIFY COLUMN cantidad_kg DECIMAL(12,2) NOT NULL;
+
+-- Restringir 1 ruta por transporte y fecha, 1 zona por recolector y fecha
+-- Esta es una REGLA OPERATIVA adoptada, no una propiedad universal del 1:N.
+ALTER TABLE PASA_POR ADD CONSTRAINT uq_pasa_transporte_fecha UNIQUE (idTransporte, fecha);
+ALTER TABLE TRABAJA ADD CONSTRAINT uq_trabaja_recolector_fecha UNIQUE (idrecolector, fecha);
+
+-- Indices para FK y reportes.
+CREATE INDEX idx_recolecta_fecha_ruta ON RECOLECTA (fecha, idRuta);
+CREATE INDEX idx_descarga_transporte_fecha ON DESCARGA_BOTADERO (idTransporte, fecha);
+CREATE INDEX idx_historial_recolector_inicio ON HISTORIAL_ASIGNACION (idrecolector, fecha_inicio);
+
+
+-- COMPRA_MATERIAL: 100 compras iniciales (una por material).
+-- Compras anteriores a las entregas de 2026 y stock suficiente.
+-- No representan facturas reales: simulacion academica.
+
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (1, 'Proveedor de prueba 2', '2025-12-15', 31, 26.72, 828.32);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (2, 'Proveedor de prueba 3', '2025-12-15', 22, 30.26, 665.72);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (3, 'Proveedor de prueba 4', '2025-12-15', 32, 79.19, 2534.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (4, 'Proveedor de prueba 5', '2025-12-15', 24, 98.50, 2364.00);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (5, 'Proveedor de prueba 6', '2025-12-15', 28, 9.12, 255.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (6, 'Proveedor de prueba 7', '2025-12-15', 35, 38.99, 1364.65);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (7, 'Proveedor de prueba 8', '2025-12-15', 32, 77.70, 2486.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (8, 'Proveedor de prueba 1', '2025-12-15', 44, 301.44, 13263.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (9, 'Proveedor de prueba 2', '2025-12-15', 25, 50.45, 1261.25);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (10, 'Proveedor de prueba 3', '2025-12-15', 28, 9.79, 274.12);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (11, 'Proveedor de prueba 4', '2025-12-15', 26, 43.30, 1125.80);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (12, 'Proveedor de prueba 5', '2025-12-15', 31, 8.56, 265.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (13, 'Proveedor de prueba 6', '2025-12-15', 24, 46.35, 1112.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (14, 'Proveedor de prueba 7', '2025-12-15', 33, 34.92, 1152.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (15, 'Proveedor de prueba 8', '2025-12-15', 39, 50.98, 1988.22);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (16, 'Proveedor de prueba 1', '2025-12-15', 27, 227.54, 6143.58);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (17, 'Proveedor de prueba 2', '2025-12-15', 28, 135.75, 3801.00);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (18, 'Proveedor de prueba 3', '2025-12-15', 27, 51.57, 1392.39);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (19, 'Proveedor de prueba 4', '2025-12-15', 31, 27.65, 857.15);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (20, 'Proveedor de prueba 5', '2025-12-15', 27, 172.22, 4649.94);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (21, 'Proveedor de prueba 6', '2025-12-15', 23, 56.96, 1310.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (22, 'Proveedor de prueba 7', '2025-12-15', 26, 89.44, 2325.44);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (23, 'Proveedor de prueba 8', '2025-12-15', 32, 74.47, 2383.04);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (24, 'Proveedor de prueba 1', '2025-12-15', 26, 134.01, 3484.26);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (25, 'Proveedor de prueba 2', '2025-12-15', 28, 42.34, 1185.52);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (26, 'Proveedor de prueba 3', '2025-12-15', 28, 320.38, 8970.64);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (27, 'Proveedor de prueba 4', '2025-12-15', 31, 45.40, 1407.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (28, 'Proveedor de prueba 5', '2025-12-15', 21, 10.86, 228.06);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (29, 'Proveedor de prueba 6', '2025-12-15', 22, 67.41, 1483.02);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (30, 'Proveedor de prueba 7', '2025-12-15', 30, 76.07, 2282.10);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (31, 'Proveedor de prueba 8', '2025-12-15', 24, 19.62, 470.88);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (32, 'Proveedor de prueba 1', '2025-12-15', 25, 23.87, 596.75);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (33, 'Proveedor de prueba 2', '2025-12-15', 35, 218.74, 7655.90);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (34, 'Proveedor de prueba 3', '2025-12-15', 27, 51.46, 1389.42);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (35, 'Proveedor de prueba 4', '2025-12-15', 36, 25.11, 903.96);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (36, 'Proveedor de prueba 5', '2025-12-15', 20, 18.51, 370.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (37, 'Proveedor de prueba 6', '2025-12-15', 21, 45.48, 955.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (38, 'Proveedor de prueba 7', '2025-12-15', 28, 153.52, 4298.56);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (39, 'Proveedor de prueba 8', '2025-12-15', 27, 102.07, 2755.89);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (40, 'Proveedor de prueba 1', '2025-12-15', 27, 35.89, 969.03);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (41, 'Proveedor de prueba 2', '2025-12-15', 29, 9.87, 286.23);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (42, 'Proveedor de prueba 3', '2025-12-15', 30, 42.54, 1276.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (43, 'Proveedor de prueba 4', '2025-12-15', 32, 9.44, 302.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (44, 'Proveedor de prueba 5', '2025-12-15', 38, 30.72, 1167.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (45, 'Proveedor de prueba 6', '2025-12-15', 33, 87.50, 2887.50);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (46, 'Proveedor de prueba 7', '2025-12-15', 27, 125.64, 3392.28);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (47, 'Proveedor de prueba 8', '2025-12-15', 41, 440.06, 18042.46);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (48, 'Proveedor de prueba 1', '2025-12-15', 25, 43.07, 1076.75);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (49, 'Proveedor de prueba 2', '2025-12-15', 33, 38.70, 1277.10);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (50, 'Proveedor de prueba 3', '2025-12-15', 43, 69.96, 3008.28);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (51, 'Proveedor de prueba 4', '2025-12-15', 26, 226.85, 5898.10);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (52, 'Proveedor de prueba 5', '2025-12-15', 41, 164.03, 6725.23);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (53, 'Proveedor de prueba 6', '2025-12-15', 43, 180.55, 7763.65);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (54, 'Proveedor de prueba 7', '2025-12-15', 28, 257.60, 7212.80);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (55, 'Proveedor de prueba 8', '2025-12-15', 21, 87.99, 1847.79);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (56, 'Proveedor de prueba 1', '2025-12-15', 28, 63.52, 1778.56);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (57, 'Proveedor de prueba 2', '2025-12-15', 40, 215.77, 8630.80);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (58, 'Proveedor de prueba 3', '2025-12-15', 35, 28.60, 1001.00);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (59, 'Proveedor de prueba 4', '2025-12-15', 25, 88.95, 2223.75);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (60, 'Proveedor de prueba 5', '2025-12-15', 30, 29.95, 898.50);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (61, 'Proveedor de prueba 6', '2025-12-15', 34, 95.54, 3248.36);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (62, 'Proveedor de prueba 7', '2025-12-15', 35, 113.88, 3985.80);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (63, 'Proveedor de prueba 8', '2025-12-15', 33, 48.94, 1615.02);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (64, 'Proveedor de prueba 1', '2025-12-15', 23, 311.50, 7164.50);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (65, 'Proveedor de prueba 2', '2025-12-15', 39, 19.69, 767.91);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (66, 'Proveedor de prueba 3', '2025-12-15', 23, 35.60, 818.80);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (67, 'Proveedor de prueba 4', '2025-12-15', 24, 112.12, 2690.88);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (68, 'Proveedor de prueba 5', '2025-12-15', 37, 26.94, 996.78);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (69, 'Proveedor de prueba 6', '2025-12-15', 26, 40.55, 1054.30);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (70, 'Proveedor de prueba 7', '2025-12-15', 35, 36.87, 1290.45);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (71, 'Proveedor de prueba 8', '2025-12-15', 28, 73.94, 2070.32);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (72, 'Proveedor de prueba 1', '2025-12-15', 20, 65.68, 1313.60);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (73, 'Proveedor de prueba 2', '2025-12-15', 22, 24.53, 539.66);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (74, 'Proveedor de prueba 3', '2025-12-15', 29, 76.60, 2221.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (75, 'Proveedor de prueba 4', '2025-12-15', 23, 70.48, 1621.04);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (76, 'Proveedor de prueba 5', '2025-12-15', 24, 31.03, 744.72);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (77, 'Proveedor de prueba 6', '2025-12-15', 28, 95.55, 2675.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (78, 'Proveedor de prueba 7', '2025-12-15', 43, 78.68, 3383.24);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (79, 'Proveedor de prueba 8', '2025-12-15', 29, 151.22, 4385.38);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (80, 'Proveedor de prueba 1', '2025-12-15', 28, 37.93, 1062.04);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (81, 'Proveedor de prueba 2', '2025-12-15', 20, 14.70, 294.00);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (82, 'Proveedor de prueba 3', '2025-12-15', 21, 20.76, 435.96);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (83, 'Proveedor de prueba 4', '2025-12-15', 29, 87.58, 2539.82);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (84, 'Proveedor de prueba 5', '2025-12-15', 29, 46.46, 1347.34);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (85, 'Proveedor de prueba 6', '2025-12-15', 24, 157.29, 3774.96);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (86, 'Proveedor de prueba 7', '2025-12-15', 25, 70.07, 1751.75);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (87, 'Proveedor de prueba 8', '2025-12-15', 26, 21.28, 553.28);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (88, 'Proveedor de prueba 1', '2025-12-15', 31, 24.23, 751.13);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (89, 'Proveedor de prueba 2', '2025-12-15', 28, 225.32, 6308.96);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (90, 'Proveedor de prueba 3', '2025-12-15', 29, 129.53, 3756.37);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (91, 'Proveedor de prueba 4', '2025-12-15', 21, 48.73, 1023.33);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (92, 'Proveedor de prueba 5', '2025-12-15', 29, 79.85, 2315.65);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (93, 'Proveedor de prueba 6', '2025-12-15', 25, 77.55, 1938.75);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (94, 'Proveedor de prueba 7', '2025-12-15', 28, 97.91, 2741.48);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (95, 'Proveedor de prueba 8', '2025-12-15', 35, 42.96, 1503.60);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (96, 'Proveedor de prueba 1', '2025-12-15', 38, 123.83, 4705.54);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (97, 'Proveedor de prueba 2', '2025-12-15', 27, 16.60, 448.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (98, 'Proveedor de prueba 3', '2025-12-15', 44, 33.10, 1456.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (99, 'Proveedor de prueba 4', '2025-12-15', 20, 55.00, 1100.00);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (100, 'Proveedor de prueba 5', '2025-12-15', 24, 64.51, 1548.24);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (1, 'Proveedor de prueba 2', '2026-07-15', 6, 27.79, 166.74);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (2, 'Proveedor de prueba 3', '2026-07-15', 7, 31.47, 220.29);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (3, 'Proveedor de prueba 4', '2026-07-15', 8, 82.36, 658.88);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (4, 'Proveedor de prueba 5', '2026-07-15', 5, 102.44, 512.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (5, 'Proveedor de prueba 1', '2026-07-15', 6, 9.48, 56.88);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (6, 'Proveedor de prueba 2', '2026-07-15', 7, 40.55, 283.85);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (7, 'Proveedor de prueba 3', '2026-07-15', 8, 80.81, 646.48);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (8, 'Proveedor de prueba 4', '2026-07-15', 5, 313.50, 1567.50);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (9, 'Proveedor de prueba 5', '2026-07-15', 6, 52.47, 314.82);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (10, 'Proveedor de prueba 1', '2026-07-15', 7, 10.18, 71.26);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (11, 'Proveedor de prueba 2', '2026-07-15', 8, 45.03, 360.24);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (12, 'Proveedor de prueba 3', '2026-07-15', 5, 8.90, 44.50);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (13, 'Proveedor de prueba 4', '2026-07-15', 6, 48.20, 289.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (14, 'Proveedor de prueba 5', '2026-07-15', 7, 36.32, 254.24);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (15, 'Proveedor de prueba 1', '2026-07-15', 8, 53.02, 424.16);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (16, 'Proveedor de prueba 2', '2026-07-15', 5, 236.64, 1183.20);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (17, 'Proveedor de prueba 3', '2026-07-15', 6, 141.18, 847.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (18, 'Proveedor de prueba 4', '2026-07-15', 7, 53.63, 375.41);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (19, 'Proveedor de prueba 5', '2026-07-15', 8, 28.76, 230.08);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (20, 'Proveedor de prueba 1', '2026-07-15', 5, 179.11, 895.55);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (21, 'Proveedor de prueba 2', '2026-07-15', 6, 59.24, 355.44);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (22, 'Proveedor de prueba 3', '2026-07-15', 7, 93.02, 651.14);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (23, 'Proveedor de prueba 4', '2026-07-15', 8, 77.45, 619.60);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (24, 'Proveedor de prueba 5', '2026-07-15', 5, 139.37, 696.85);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (25, 'Proveedor de prueba 1', '2026-07-15', 6, 44.03, 264.18);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (26, 'Proveedor de prueba 2', '2026-07-15', 7, 333.20, 2332.40);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (27, 'Proveedor de prueba 3', '2026-07-15', 8, 47.22, 377.76);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (28, 'Proveedor de prueba 4', '2026-07-15', 5, 11.29, 56.45);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (29, 'Proveedor de prueba 5', '2026-07-15', 6, 70.11, 420.66);
+INSERT INTO COMPRA_MATERIAL (idMaterial, proveedor, fecha, cantidad, precio_unitario, total) VALUES (30, 'Proveedor de prueba 1', '2026-07-15', 7, 79.11, 553.77);
+
+-- Stock actual = compras totales - entregas (DISPONE).
+UPDATE MATERIAL_TRABAJO AS m
+LEFT JOIN (SELECT idMaterial, SUM(cantidad) AS qty FROM COMPRA_MATERIAL GROUP BY idMaterial) AS cmp
+  ON cmp.idMaterial = m.idMaterial
+LEFT JOIN (SELECT idMaterial, SUM(cantidad) AS qty FROM DISPONE GROUP BY idMaterial) AS disp
+  ON disp.idMaterial = m.idMaterial
+SET m.stock_actual = GREATEST(0, COALESCE(cmp.qty,0) - COALESCE(disp.qty,0));
+
+-- DEVOLUCION_MATERIAL: varias asignaciones historicas con retornos.
+-- Se reutiliza la FK compuesta de DISPONE (1:N).
+
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (11, 43, '2026-01-05', '2026-01-15', 2, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (3, 41, '2026-01-24', '2026-02-05', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (53, 68, '2026-01-25', '2026-02-08', 4, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (171, 92, '2026-01-30', '2026-02-15', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (20, 96, '2026-02-06', '2026-02-24', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (75, 68, '2026-02-10', '2026-03-02', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (36, 47, '2026-02-21', '2026-03-15', 5, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (156, 90, '2026-02-26', '2026-03-08', 4, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (94, 63, '2026-03-01', '2026-03-13', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (179, 84, '2026-03-09', '2026-03-23', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (53, 58, '2026-03-11', '2026-03-27', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (190, 53, '2026-03-13', '2026-03-31', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (140, 98, '2026-03-19', '2026-04-08', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (174, 74, '2026-04-07', '2026-04-29', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (117, 45, '2026-04-13', '2026-04-23', 5, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (42, 11, '2026-04-15', '2026-04-27', 2, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (113, 94, '2026-04-19', '2026-05-03', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (27, 22, '2026-04-25', '2026-05-11', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (28, 79, '2026-05-06', '2026-05-24', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (67, 58, '2026-05-11', '2026-05-31', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (144, 52, '2026-05-15', '2026-06-06', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (199, 27, '2026-05-20', '2026-05-30', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (66, 6, '2026-05-27', '2026-06-08', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (79, 25, '2026-05-28', '2026-06-11', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (180, 78, '2026-06-01', '2026-06-17', 4, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (83, 19, '2026-06-05', '2026-06-23', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (79, 15, '2026-06-08', '2026-06-28', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (22, 93, '2026-06-29', '2026-07-21', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (108, 95, '2026-07-09', '2026-07-19', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (133, 96, '2026-07-12', '2026-07-24', 4, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (42, 35, '2026-07-16', '2026-07-30', 4, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (198, 46, '2026-07-18', '2026-08-03', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (88, 10, '2026-07-21', '2026-08-08', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (83, 95, '2026-07-24', '2026-08-13', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (72, 45, '2026-07-28', '2026-08-19', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (95, 12, '2026-07-29', '2026-08-08', 4, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (150, 20, '2026-08-02', '2026-08-14', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (16, 61, '2026-08-05', '2026-08-19', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (196, 20, '2026-08-09', '2026-08-25', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (88, 78, '2026-08-12', '2026-08-30', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (119, 65, '2026-08-15', '2026-09-04', 5, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (167, 30, '2026-08-17', '2026-09-08', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (116, 19, '2026-08-20', '2026-08-30', 3, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (157, 18, '2026-08-24', '2026-09-05', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (126, 78, '2026-08-26', '2026-09-09', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (92, 65, '2026-09-03', '2026-09-19', 3, 1, 'Danado parcial');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (120, 19, '2026-09-07', '2026-09-25', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (187, 60, '2026-09-09', '2026-09-29', 2, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (157, 77, '2026-09-13', '2026-10-05', 1, 0, 'Bueno');
+INSERT INTO DEVOLUCION_MATERIAL (idPersona, idMaterial, fecha_asignacion, fecha_devolucion, cantidad_devuelta, cantidad_danada, estado_devolucion) VALUES (24, 15, '2026-09-22', '2026-10-02', 2, 0, 'Bueno');
+
+-- Las devoluciones registran estado/recuperacion, pero NO incrementan
+-- el stock automaticamente. Hace falta una recepcion y revision explicita
+-- para reincorporar material devuelto al inventario utilizable.
+
+-- HISTORIAL_ASIGNACION: 224 asignaciones asociadas a TRABAJA y PASA_POR.
+-- Hora estimada y motivo son informacion de prueba.
+
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (107, 7, 10, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (108, 8, 17, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (110, 10, 24, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (111, 11, 31, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (157, 7, 10, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (158, 8, 17, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (160, 10, 24, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (161, 11, 31, '2026-09-01 07:00:00', '2026-09-01 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (112, 12, 19, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (115, 15, 26, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (116, 16, 33, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (118, 18, 40, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (162, 12, 19, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (165, 15, 26, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (166, 16, 33, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (168, 18, 40, '2026-09-02 07:00:00', '2026-09-02 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (120, 20, 28, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (121, 21, 35, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (122, 22, 2, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (123, 23, 9, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (170, 20, 28, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (171, 21, 35, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (172, 22, 2, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (173, 23, 9, '2026-09-03 07:00:00', '2026-09-03 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (124, 24, 37, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (125, 25, 4, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (126, 26, 11, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (128, 28, 18, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (174, 24, 37, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (175, 25, 4, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (176, 26, 11, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (178, 28, 18, '2026-09-04 07:00:00', '2026-09-04 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (129, 29, 6, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (130, 30, 13, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (131, 31, 20, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (132, 32, 27, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (179, 29, 6, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (180, 30, 13, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (181, 31, 20, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (182, 32, 27, '2026-09-05 07:00:00', '2026-09-05 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (133, 33, 15, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (134, 34, 22, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (136, 36, 29, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (137, 37, 36, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (183, 33, 15, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (184, 34, 22, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (186, 36, 29, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (187, 37, 36, '2026-09-06 07:00:00', '2026-09-06 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (138, 38, 24, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (139, 39, 31, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (140, 40, 38, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (142, 42, 5, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (188, 38, 24, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (189, 39, 31, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (190, 40, 38, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (192, 42, 5, '2026-09-07 07:00:00', '2026-09-07 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (144, 44, 33, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (145, 45, 40, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (147, 47, 7, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (148, 48, 14, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (194, 44, 33, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (195, 45, 40, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (197, 47, 7, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (198, 48, 14, '2026-09-08 07:00:00', '2026-09-08 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (101, 1, 9, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (102, 2, 16, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (103, 3, 3, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (150, 50, 2, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (151, 1, 9, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (152, 2, 16, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (153, 3, 3, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (200, 50, 2, '2026-09-09 07:00:00', '2026-09-09 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (104, 4, 11, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (107, 7, 18, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (108, 8, 5, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (110, 10, 12, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (154, 4, 11, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (157, 7, 18, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (158, 8, 5, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (160, 10, 12, '2026-09-10 07:00:00', '2026-09-10 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (111, 11, 20, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (112, 12, 7, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (115, 15, 14, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (116, 16, 21, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (161, 11, 20, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (162, 12, 7, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (165, 15, 14, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (166, 16, 21, '2026-09-11 07:00:00', '2026-09-11 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (118, 18, 9, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (120, 20, 16, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (121, 21, 23, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (122, 22, 30, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (168, 18, 9, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (170, 20, 16, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (171, 21, 23, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (172, 22, 30, '2026-09-12 07:00:00', '2026-09-12 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (123, 23, 18, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (124, 24, 25, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (125, 25, 32, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (126, 26, 39, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (173, 23, 18, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (174, 24, 25, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (175, 25, 32, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (176, 26, 39, '2026-09-13 07:00:00', '2026-09-13 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (128, 28, 27, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (129, 29, 34, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (130, 30, 1, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (131, 31, 8, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (178, 28, 27, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (179, 29, 34, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (180, 30, 1, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (181, 31, 8, '2026-09-14 07:00:00', '2026-09-14 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (132, 32, 36, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (133, 33, 3, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (134, 34, 10, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (136, 36, 17, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (182, 32, 36, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (183, 33, 3, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (184, 34, 10, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (186, 36, 17, '2026-09-15 07:00:00', '2026-09-15 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (137, 37, 5, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (138, 38, 12, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (139, 39, 19, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (140, 40, 26, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (187, 37, 5, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (188, 38, 12, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (189, 39, 19, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (190, 40, 26, '2026-09-16 07:00:00', '2026-09-16 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (142, 42, 14, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (144, 44, 21, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (145, 45, 28, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (147, 47, 35, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (192, 42, 14, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (194, 44, 21, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (195, 45, 28, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (197, 47, 35, '2026-09-17 07:00:00', '2026-09-17 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (101, 1, 37, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (102, 2, 4, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (148, 48, 23, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (150, 50, 30, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (151, 1, 37, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (152, 2, 4, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (198, 48, 23, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (200, 50, 30, '2026-09-18 07:00:00', '2026-09-18 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (103, 3, 32, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (104, 4, 39, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (107, 7, 6, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (108, 8, 13, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (153, 3, 32, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (154, 4, 39, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (157, 7, 6, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (158, 8, 13, '2026-09-19 07:00:00', '2026-09-19 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (110, 10, 1, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (111, 11, 8, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (112, 12, 15, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (115, 15, 2, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (160, 10, 1, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (161, 11, 8, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (162, 12, 15, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (165, 15, 2, '2026-09-20 07:00:00', '2026-09-20 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (116, 16, 10, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (118, 18, 17, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (120, 20, 4, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (121, 21, 11, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (166, 16, 10, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (168, 18, 17, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (170, 20, 4, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (171, 21, 11, '2026-09-21 07:00:00', '2026-09-21 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (122, 22, 19, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (123, 23, 6, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (124, 24, 13, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (125, 25, 20, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (172, 22, 19, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (173, 23, 6, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (174, 24, 13, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (175, 25, 20, '2026-09-22 07:00:00', '2026-09-22 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (126, 26, 8, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (128, 28, 15, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (129, 29, 22, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (130, 30, 29, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (176, 26, 8, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (178, 28, 15, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (179, 29, 22, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (180, 30, 29, '2026-09-23 07:00:00', '2026-09-23 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (131, 31, 17, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (132, 32, 24, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (133, 33, 31, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (134, 34, 38, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (181, 31, 17, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (182, 32, 24, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (183, 33, 31, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (184, 34, 38, '2026-09-24 07:00:00', '2026-09-24 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (136, 36, 26, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (137, 37, 33, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (138, 38, 40, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (139, 39, 7, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (186, 36, 26, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (187, 37, 33, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (188, 38, 40, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (189, 39, 7, '2026-09-25 07:00:00', '2026-09-25 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (140, 40, 35, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (142, 42, 2, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (144, 44, 9, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (145, 45, 16, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (190, 40, 35, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (192, 42, 2, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (194, 44, 9, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (195, 45, 16, '2026-09-26 07:00:00', '2026-09-26 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (101, 1, 25, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (147, 47, 4, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (148, 48, 11, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (150, 50, 18, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (151, 1, 25, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (197, 47, 4, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (198, 48, 11, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (200, 50, 18, '2026-09-27 07:00:00', '2026-09-27 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (102, 2, 13, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (103, 3, 20, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (104, 4, 27, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (107, 7, 34, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (152, 2, 13, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (153, 3, 20, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (154, 4, 27, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+INSERT INTO HISTORIAL_ASIGNACION (idrecolector, idTransporte, idZona, fecha_inicio, fecha_fin, motivo) VALUES (157, 7, 34, '2026-09-28 07:00:00', '2026-09-28 19:00:00', 'Asignacion historica de prueba');
+
+-- DESCARGA_BOTADERO: 112 descargas, una por recorrido PASA_POR.
+-- Cada descarga corresponde a los kg sinteticos de RECOLECTA
+-- del transporte y fecha, en su botadero de referencia.
+-- Capacidad del botadero se actualiza por suma de descargas confirmadas.
+
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (7, 7, '2026-09-01 20:00:00', 255.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (8, 8, '2026-09-01 20:00:00', 158.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (10, 10, '2026-09-01 20:00:00', 610.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (11, 11, '2026-09-01 20:00:00', 32.64, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (12, 12, '2026-09-02 20:00:00', 490.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (15, 15, '2026-09-02 20:00:00', 396.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (16, 16, '2026-09-02 20:00:00', 384.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (18, 18, '2026-09-02 20:00:00', 145.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (20, 20, '2026-09-03 20:00:00', 136.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (21, 21, '2026-09-03 20:00:00', 800.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (22, 22, '2026-09-03 20:00:00', 26.88, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (23, 23, '2026-09-03 20:00:00', 49.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (24, 24, '2026-09-04 20:00:00', 73.92, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (25, 25, '2026-09-04 20:00:00', 85.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (26, 26, '2026-09-04 20:00:00', 90.92, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (28, 28, '2026-09-04 20:00:00', 230.88, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (29, 29, '2026-09-05 20:00:00', 233.64, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (30, 30, '2026-09-05 20:00:00', 282.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (31, 31, '2026-09-05 20:00:00', 626.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (32, 32, '2026-09-05 20:00:00', 408.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (33, 33, '2026-09-06 20:00:00', 256.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (34, 34, '2026-09-06 20:00:00', 312.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (36, 1, '2026-09-06 20:00:00', 384.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (37, 2, '2026-09-06 20:00:00', 800.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (38, 3, '2026-09-07 20:00:00', 660.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (39, 4, '2026-09-07 20:00:00', 36.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (40, 5, '2026-09-07 20:00:00', 76.56, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (42, 7, '2026-09-07 20:00:00', 48.12, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (44, 9, '2026-09-08 20:00:00', 336.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (45, 10, '2026-09-08 20:00:00', 158.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (47, 12, '2026-09-08 20:00:00', 48.24, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (48, 13, '2026-09-08 20:00:00', 53.52, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (1, 1, '2026-09-09 20:00:00', 67.08, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (2, 2, '2026-09-09 20:00:00', 48.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (3, 3, '2026-09-09 20:00:00', 305.60, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (50, 15, '2026-09-09 20:00:00', 346.72, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (4, 4, '2026-09-10 20:00:00', 107.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (7, 7, '2026-09-10 20:00:00', 38.88, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (8, 8, '2026-09-10 20:00:00', 24.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (10, 10, '2026-09-10 20:00:00', 420.16, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (11, 11, '2026-09-11 20:00:00', 562.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (12, 12, '2026-09-11 20:00:00', 43.56, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (15, 15, '2026-09-11 20:00:00', 405.64, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (16, 16, '2026-09-11 20:00:00', 408.84, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (18, 18, '2026-09-12 20:00:00', 62.52, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (20, 20, '2026-09-12 20:00:00', 376.24, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (21, 21, '2026-09-12 20:00:00', 81.84, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (22, 22, '2026-09-12 20:00:00', 95.04, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (23, 23, '2026-09-13 20:00:00', 198.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (24, 24, '2026-09-13 20:00:00', 50.76, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (25, 25, '2026-09-13 20:00:00', 800.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (26, 26, '2026-09-13 20:00:00', 384.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (28, 28, '2026-09-14 20:00:00', 37.44, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (29, 29, '2026-09-14 20:00:00', 132.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (30, 30, '2026-09-14 20:00:00', 124.08, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (31, 31, '2026-09-14 20:00:00', 313.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (32, 32, '2026-09-15 20:00:00', 700.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (33, 33, '2026-09-15 20:00:00', 354.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (34, 34, '2026-09-15 20:00:00', 175.44, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (36, 1, '2026-09-15 20:00:00', 140.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (37, 2, '2026-09-16 20:00:00', 44.16, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (38, 3, '2026-09-16 20:00:00', 369.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (39, 4, '2026-09-16 20:00:00', 416.32, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (40, 5, '2026-09-16 20:00:00', 408.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (42, 7, '2026-09-17 20:00:00', 370.16, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (44, 9, '2026-09-17 20:00:00', 391.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (45, 10, '2026-09-17 20:00:00', 176.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (47, 12, '2026-09-17 20:00:00', 87.12, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (1, 1, '2026-09-18 20:00:00', 97.68, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (2, 2, '2026-09-18 20:00:00', 88.44, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (48, 13, '2026-09-18 20:00:00', 89.76, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (50, 15, '2026-09-18 20:00:00', 84.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (3, 3, '2026-09-19 20:00:00', 680.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (4, 4, '2026-09-19 20:00:00', 408.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (7, 7, '2026-09-19 20:00:00', 454.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (8, 8, '2026-09-19 20:00:00', 24.72, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (10, 10, '2026-09-20 20:00:00', 131.12, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (11, 11, '2026-09-20 20:00:00', 281.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (12, 12, '2026-09-20 20:00:00', 366.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (15, 15, '2026-09-20 20:00:00', 25.68, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (16, 16, '2026-09-21 20:00:00', 64.08, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (18, 18, '2026-09-21 20:00:00', 107.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (20, 20, '2026-09-21 20:00:00', 291.48, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (21, 21, '2026-09-21 20:00:00', 61.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (22, 22, '2026-09-22 20:00:00', 405.84, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (23, 23, '2026-09-22 20:00:00', 454.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (24, 24, '2026-09-22 20:00:00', 24.72, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (25, 25, '2026-09-22 20:00:00', 640.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (26, 26, '2026-09-23 20:00:00', 272.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (28, 28, '2026-09-23 20:00:00', 300.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (29, 29, '2026-09-23 20:00:00', 250.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (30, 30, '2026-09-23 20:00:00', 408.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (31, 31, '2026-09-24 20:00:00', 154.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (32, 32, '2026-09-24 20:00:00', 634.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (33, 33, '2026-09-24 20:00:00', 30.72, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (34, 34, '2026-09-24 20:00:00', 102.96, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (36, 1, '2026-09-25 20:00:00', 13.92, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (37, 2, '2026-09-25 20:00:00', 167.20, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (38, 3, '2026-09-25 20:00:00', 127.60, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (39, 4, '2026-09-25 20:00:00', 357.52, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (40, 5, '2026-09-26 20:00:00', 89.76, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (42, 7, '2026-09-26 20:00:00', 22.08, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (44, 9, '2026-09-26 20:00:00', 128.04, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (45, 10, '2026-09-26 20:00:00', 308.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (1, 1, '2026-09-27 20:00:00', 60.96, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (47, 12, '2026-09-27 20:00:00', 254.88, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (48, 13, '2026-09-27 20:00:00', 52.80, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (50, 15, '2026-09-27 20:00:00', 34.08, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (2, 2, '2026-09-28 20:00:00', 324.40, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (3, 3, '2026-09-28 20:00:00', 530.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (4, 4, '2026-09-28 20:00:00', 360.00, 'Confirmada');
+INSERT INTO DESCARGA_BOTADERO (idTransporte, idBotadero, fecha, cantidad_kg, estado) VALUES (7, 7, '2026-09-28 20:00:00', 660.00, 'Confirmada');
+
+UPDATE BOTADERO AS b
+LEFT JOIN (
+    SELECT idBotadero, SUM(cantidad_kg) AS total
+    FROM DESCARGA_BOTADERO
+    WHERE estado = 'Confirmada'
+    GROUP BY idBotadero
+) AS x ON x.idBotadero = b.idBotadero
+SET b.capacidad_utilizada = COALESCE(x.total, 0),
+    b.estado_operativo = CASE
+        WHEN COALESCE(x.total,0) >= b.capacidad_maxima_kg THEN 'Saturado'
+        WHEN COALESCE(x.total,0) >= b.capacidad_maxima_kg * .90 THEN 'Critico'
+        WHEN COALESCE(x.total,0) >= b.capacidad_maxima_kg * .70 THEN 'Advertencia'
+        ELSE 'Disponible'
+    END;
+
+-- Restringir campos numericos y evitar saldos negativos.
+ALTER TABLE CONTENEDOR
+    ADD CONSTRAINT chk_contenedor_volumen CHECK (capacidad_litros > 0),
+    ADD CONSTRAINT chk_contenedor_capacidadkg CHECK (capacidad_kg > 0);
+ALTER TABLE TRANSPORTE
+    ADD CONSTRAINT chk_transporte_kg CHECK (capacidad_kg > 0 AND carga_actual_kg BETWEEN 0 AND capacidad_kg);
+ALTER TABLE BOTADERO
+    ADD CONSTRAINT chk_botadero_kg CHECK (capacidad_maxima_kg > 0 AND capacidad_utilizada BETWEEN 0 AND capacidad_maxima_kg);
+ALTER TABLE MATERIAL_TRABAJO
+    ADD CONSTRAINT chk_stock_material CHECK (stock_actual >= 0 AND stock_minimo >= 0);
+ALTER TABLE RECOLECTA
+    ADD CONSTRAINT chk_recolecta_kg CHECK (cantidad_kg > 0);
+
+-- Comprobar integridad de datos: deben devolver cero incoherencias.
+SELECT 'Recolecciones sin ruta/zona coherentes' AS control, COUNT(*) AS errores
+FROM RECOLECTA rc
+JOIN RUTA ru ON ru.idRuta = rc.idRuta
+JOIN CONTENEDOR co ON co.idContenedor = rc.idContenedor
+JOIN VIA vi ON vi.idVia = co.idVia
+LEFT JOIN INTEGRA i ON i.idRuta = rc.idRuta AND i.idVia = vi.idVia AND i.idContenedor = rc.idContenedor
+LEFT JOIN PASA_POR pp ON pp.idTransporte = rc.idTransporte AND pp.idRuta = rc.idRuta AND pp.fecha = rc.fecha
+LEFT JOIN TRABAJA tra ON tra.idrecolector = rc.idrecolector AND tra.idZona = ru.idZona AND tra.fecha = rc.fecha
+WHERE ru.idZona <> vi.idZona OR i.idRuta IS NULL OR pp.idRuta IS NULL OR tra.idZona IS NULL;
+
+SELECT 'Descarga supera capacidad de botadero' AS control, COUNT(*) AS errores
+FROM BOTADERO WHERE capacidad_utilizada > capacidad_maxima_kg;
+
+SELECT 'Compras/entregas contra stock' AS control, COUNT(*) AS errores
+FROM MATERIAL_TRABAJO m
+LEFT JOIN (SELECT idMaterial, SUM(cantidad) AS n FROM COMPRA_MATERIAL GROUP BY idMaterial) cmp ON cmp.idMaterial=m.idMaterial
+LEFT JOIN (SELECT idMaterial, SUM(cantidad) AS n FROM DISPONE GROUP BY idMaterial) d ON d.idMaterial=m.idMaterial
+WHERE m.stock_actual <> COALESCE(cmp.n,0)-COALESCE(d.n,0);
+
+-- Resumen final para verificar el volumen de los datos.
+SELECT 'ZONA' AS tabla, COUNT(*) AS registros FROM ZONA
+UNION ALL SELECT 'VIA', COUNT(*) FROM VIA
+UNION ALL SELECT 'RUTA', COUNT(*) FROM RUTA
+UNION ALL SELECT 'CONTENEDOR', COUNT(*) FROM CONTENEDOR
+UNION ALL SELECT 'RECOLECTA', COUNT(*) FROM RECOLECTA
+UNION ALL SELECT 'COMPRA_MATERIAL', COUNT(*) FROM COMPRA_MATERIAL
+UNION ALL SELECT 'DEVOLUCION_MATERIAL', COUNT(*) FROM DEVOLUCION_MATERIAL
+UNION ALL SELECT 'DESCARGA_BOTADERO', COUNT(*) FROM DESCARGA_BOTADERO
+UNION ALL SELECT 'HISTORIAL_ASIGNACION', COUNT(*) FROM HISTORIAL_ASIGNACION;
+
 
 COMMIT;
